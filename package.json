@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json.schemastore.org/package.json",
+  "name": "@jackmazac/opencode-host-adapter",
+  "version": "0.1.0",
+  "description": "Defensive wrapper for OpenCode plugins. Validates tool definitions, wraps execute in try/catch, filters bad system-transform output, and emits structured telemetry. Catches the codemem-style 'undefined is not an object (evaluating n._zod.def)' bug at registration with a clear actionable error.",
+  "type": "module",
+  "license": "MIT",
+  "private": false,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jackmazac/opencode-host-adapter.git"
+  },
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "plugin-host",
+    "defense-in-depth",
+    "validation",
+    "telemetry"
+  ],
+  "exports": {
+    ".": "./src/index.ts",
+    "./contract-test": "./src/contract-test.ts"
+  },
+  "bin": {
+    "opencode-check-no-zod-import": "./src/cli/check-no-zod-import.ts",
+    "opencode-audit-zod": "./src/cli/audit-zod.ts"
+  },
+  "files": [
+    "src",
+    "!src/**/*.test.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "peerDependencies": {
+    "@opencode-ai/plugin": ">=1.14.0"
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "1.14.31",
+    "@types/bun": "latest",
+    "@types/node": "latest",
+    "@typescript/native-preview": "latest"
+  },
+  "scripts": {
+    "typecheck": "tsgo --noEmit",
+    "test": "bun test"
+  }
+}
