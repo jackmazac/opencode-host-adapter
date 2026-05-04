@@ -24,7 +24,20 @@
  */
 
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  newAgentRunId,
+  newCorrelationId,
+  parseToolCallId,
+  validateTelemetryEnvelope,
+} from "@jackmazac/opencode-fleet-contracts";
+import { wrapPlugin } from "./wrap.ts";
+import { assertToolFailureResult } from "./types.ts";
 import { validateToolDefinitions } from "./validate.ts";
+
+export { assertToolFailureResult } from "./types.ts";
 
 export type ContractTestOptions = {
   /** Absolute path or import.meta-resolved URL of the plugin entry. */
@@ -86,13 +99,14 @@ export function runPluginContractTests(opts: ContractTestOptions): void {
       const exportName = opts.exportName ?? "default";
       const factoryRaw = (mod as Record<string, unknown>)[exportName];
       if (typeof factoryRaw !== "function") return;
-      const factory = factoryRaw as (input: unknown, options?: unknown) => Promise<{ tool?: unknown }>;
+      const factory = factoryRaw as (
+        input: unknown,
+        options?: unknown,
+      ) => Promise<{ tool?: unknown }>;
       const hooks = await factory(opts.stubInput(), {});
       const validation = validateToolDefinitions(hooks?.tool, opts.pluginName);
       if (!validation.ok) {
-        throw new Error(
-          `tool validation failed:\n  ${validation.errors.join("\n  ")}`,
-        );
+        throw new Error(`tool validation failed:\n  ${validation.errors.join("\n  ")}`);
       }
       expect(validation.ok).toBe(true);
     });
@@ -116,6 +130,88 @@ export function runPluginContractTests(opts: ContractTestOptions): void {
         expect(names).toEqual(sortedExpected);
       });
     }
+
+    test("wrapped mock tool emits canonical fleet telemetry", async () => {
+      const telemetryPath = tempTelemetryPath();
+      const correlationId = newCorrelationId();
+      const agentRunId = newAgentRunId();
+      const wrapped = wrapPlugin(
+        async () => ({
+          tool: {
+            noop: { description: "noop", args: {}, execute: async () => "ok" },
+          },
+        }),
+        { name: opts.pluginName, telemetryPath },
+      );
+      const hooks = await wrapped(opts.stubInput());
+      const tool = hooks.tool?.noop;
+      if (!isRecord(tool) || typeof tool.execute !== "function") {
+        throw new Error("noop tool not registered");
+      }
+      await tool.execute(
+        {},
+        { metadata: { fleet: { correlation_id: correlationId, agent_run_id: agentRunId } } },
+      );
+
+      const envelope = readLastNdjsonObject(telemetryPath);
+      const validation = validateTelemetryEnvelope(envelope);
+      expect(validation.ok).toBe(true);
+      if (!validation.ok) throw new Error(validation.errors.join("; "));
+      expect(String(validation.value.correlation_id)).toBe(String(correlationId));
+      expect(String(validation.value.agent_run_id)).toBe(String(agentRunId));
+      expect(validation.value.tool_call_id).not.toBeNull();
+      if (validation.value.tool_call_id === null) throw new Error("tool_call_id missing");
+      expect(parseToolCallId(String(validation.value.tool_call_id)).ok).toBe(true);
+    });
+
+    test("wrapped mock tool returns structured failure by default and legacy string when opted out", async () => {
+      const structuredPath = tempTelemetryPath();
+      const structured = wrapPlugin(
+        async () => ({
+          tool: {
+            crash: {
+              description: "crash",
+              args: {},
+              execute: async () => {
+                throw new Error("contract boom");
+              },
+            },
+          },
+        }),
+        { name: opts.pluginName, telemetryPath: structuredPath },
+      );
+      const structuredHooks = await structured(opts.stubInput());
+      const structuredTool = structuredHooks.tool?.crash;
+      if (!isRecord(structuredTool) || typeof structuredTool.execute !== "function") {
+        throw new Error("crash tool not registered");
+      }
+      const structuredResult = await structuredTool.execute({}, {});
+      assertToolFailureResult(structuredResult);
+      expect(structuredResult.error.message).toBe("contract boom");
+
+      const legacy = wrapPlugin(
+        async () => ({
+          tool: {
+            crash: {
+              description: "crash",
+              args: {},
+              execute: async () => {
+                throw new Error("legacy boom");
+              },
+            },
+          },
+        }),
+        { name: opts.pluginName, telemetryPath: tempTelemetryPath(), legacyErrorString: true },
+      );
+      const legacyHooks = await legacy(opts.stubInput());
+      const legacyTool = legacyHooks.tool?.crash;
+      if (!isRecord(legacyTool) || typeof legacyTool.execute !== "function") {
+        throw new Error("legacy crash tool not registered");
+      }
+      const legacyResult = await legacyTool.execute({}, {});
+      expect(typeof legacyResult).toBe("string");
+      expect(legacyResult).toBe(`❌ [${opts.pluginName}].crash failed: legacy boom`);
+    });
   });
 }
 
@@ -124,7 +220,10 @@ async function loadTools(opts: ContractTestOptions): Promise<Record<string, unkn
   const exportName = opts.exportName ?? "default";
   const factoryRaw = (mod as Record<string, unknown>)[exportName];
   if (typeof factoryRaw !== "function") return {};
-  const factory = factoryRaw as (input: unknown, options?: unknown) => Promise<{ tool?: Record<string, unknown> }>;
+  const factory = factoryRaw as (
+    input: unknown,
+    options?: unknown,
+  ) => Promise<{ tool?: Record<string, unknown> }>;
   const hooks = await factory(opts.stubInput(), {});
   return hooks?.tool ?? {};
 }
@@ -161,7 +260,10 @@ export function runCrossPluginIntegrationTest(opts: IntegrationTestOptions): voi
         if (typeof factoryRaw !== "function") {
           throw new Error(`${name}: default export is not a function`);
         }
-        const factory = factoryRaw as (input: unknown, options?: unknown) => Promise<{ tool?: Record<string, unknown> }>;
+        const factory = factoryRaw as (
+          input: unknown,
+          options?: unknown,
+        ) => Promise<{ tool?: Record<string, unknown> }>;
         const hooks = await factory(opts.stubInput(), {});
         const validation = validateToolDefinitions(hooks?.tool, name);
         if (!validation.ok) {
@@ -186,4 +288,19 @@ export function runCrossPluginIntegrationTest(opts: IntegrationTestOptions): voi
       expect(collisions.length).toBe(0);
     });
   });
+}
+
+function tempTelemetryPath(): string {
+  return join(mkdtempSync(join(tmpdir(), "host-adapter-contract-")), "lifecycle.jsonl");
+}
+
+function readLastNdjsonObject(path: string): unknown {
+  const lines = readFileSync(path, "utf8").trim().split("\n");
+  const last = lines.at(-1);
+  if (!last) throw new Error("telemetry file was empty");
+  return JSON.parse(last);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }

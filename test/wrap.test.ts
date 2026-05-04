@@ -10,7 +10,12 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { tool } from "@opencode-ai/plugin";
-import { validateToolDefinitions, wrapPlugin } from "../src/index.ts";
+import {
+  assertToolFailureResult,
+  fleetContracts,
+  validateToolDefinitions,
+  wrapPlugin,
+} from "../src/index.ts";
 
 const z = tool.schema;
 
@@ -23,6 +28,55 @@ const tempPaths: string[] = [];
 function trackTemp(path: string): string {
   tempPaths.push(path);
   return path;
+}
+
+type TestExecute = (args: unknown, context: unknown) => Promise<unknown>;
+
+function readTelemetry(path: string): Array<Record<string, unknown>> {
+  return readFileSync(path, "utf8")
+    .trim()
+    .split("\n")
+    .filter((line) => line.length > 0)
+    .map((line) => JSON.parse(line))
+    .filter(isRecord);
+}
+
+function telemetryByKind(path: string, kind: string): Array<Record<string, unknown>> {
+  return readTelemetry(path).filter((entry) => entry.kind === kind);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function getExecute(toolEntry: unknown, name: string): TestExecute {
+  if (!isRecord(toolEntry) || typeof toolEntry.execute !== "function") {
+    throw new Error(`${name} tool not registered`);
+  }
+  const execute = toolEntry.execute;
+  return async (args: unknown, context: unknown) => execute(args, context);
+}
+
+function readToolCallId(value: unknown): unknown {
+  if (!isRecord(value)) return undefined;
+  if (!isRecord(value.metadata)) return undefined;
+  if (!isRecord(value.metadata.fleet)) return undefined;
+  return value.metadata.fleet.tool_call_id;
+}
+
+function readSignal(value: unknown): AbortSignal | undefined {
+  if (!isRecord(value)) return undefined;
+  return value.signal instanceof AbortSignal ? value.signal : undefined;
+}
+
+function readErrorField(value: unknown, field: string): unknown {
+  if (!isRecord(value)) return undefined;
+  if (!isRecord(value.error)) return undefined;
+  return value.error[field];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 afterEach(() => {
@@ -80,11 +134,21 @@ describe("validateToolDefinitions", () => {
   });
 
   test("rejects missing description / execute / args / non-schema arg", () => {
-    expect(validateToolDefinitions({ a: { args: { x: z.string() }, execute: async () => "ok" } }, "p").ok).toBe(false);
-    expect(validateToolDefinitions({ a: { description: "x", args: { x: z.string() } } }, "p").ok).toBe(false);
-    expect(validateToolDefinitions({ a: { description: "x", execute: async () => "ok" } }, "p").ok).toBe(false);
     expect(
-      validateToolDefinitions({ a: { description: "x", args: { x: "not a schema" }, execute: async () => "ok" } }, "p").ok,
+      validateToolDefinitions({ a: { args: { x: z.string() }, execute: async () => "ok" } }, "p")
+        .ok,
+    ).toBe(false);
+    expect(
+      validateToolDefinitions({ a: { description: "x", args: { x: z.string() } } }, "p").ok,
+    ).toBe(false);
+    expect(
+      validateToolDefinitions({ a: { description: "x", execute: async () => "ok" } }, "p").ok,
+    ).toBe(false);
+    expect(
+      validateToolDefinitions(
+        { a: { description: "x", args: { x: "not a schema" }, execute: async () => "ok" } },
+        "p",
+      ).ok,
     ).toBe(false);
   });
 });
@@ -119,7 +183,7 @@ describe("wrapPlugin", () => {
     expect(readFileSync(path, "utf8")).toContain('"plugin.failed"');
   });
 
-  test("wraps tool execute so thrown errors return as strings", async () => {
+  test("wraps tool execute so thrown errors return structured failures by default", async () => {
     const path = trackTemp(tempTelemetry());
     const wrapped = wrapPlugin(
       async () => ({
@@ -137,14 +201,38 @@ describe("wrapPlugin", () => {
     );
     const hooks = await wrapped(stubInput);
     const crashRaw = hooks.tool?.crash;
-    if (!crashRaw || typeof crashRaw !== "object") throw new Error("crash tool not registered");
-    const execute = (crashRaw as { execute: (args: unknown, context: unknown) => Promise<unknown> }).execute;
+    const execute = getExecute(crashRaw, "crash");
     const result = await execute({ msg: "hi" }, {});
-    expect(typeof result).toBe("string");
-    if (typeof result !== "string") return;
-    expect(result).toContain("crashy");
-    expect(result).toContain("crash");
-    expect(result).toContain("inside");
+    assertToolFailureResult(result);
+    expect(result.plugin).toBe("crashy");
+    expect(result.tool).toBe("crash");
+    expect(result.message).toBe("❌ [crashy].crash failed: inside");
+    expect(result.error.message).toBe("inside");
+    expect(result.schema_version).toBe(1);
+    expect(readFileSync(path, "utf8")).toContain('"tool.failed"');
+  });
+
+  test("legacyErrorString restores old tool failure string", async () => {
+    const path = trackTemp(tempTelemetry());
+    const wrapped = wrapPlugin(
+      async () => ({
+        tool: {
+          crash: {
+            description: "always crashes",
+            args: { msg: z.string() },
+            execute: async () => {
+              throw new Error("inside");
+            },
+          },
+        },
+      }),
+      { name: "crashy", telemetryPath: path, legacyErrorString: true },
+    );
+    const hooks = await wrapped(stubInput);
+    const crashRaw = hooks.tool?.crash;
+    const execute = getExecute(crashRaw, "crash");
+    const result = await execute({ msg: "hi" }, {});
+    expect(result).toBe("❌ [crashy].crash failed: inside");
     expect(readFileSync(path, "utf8")).toContain('"tool.failed"');
   });
 
@@ -184,10 +272,10 @@ describe("wrapPlugin", () => {
       args: z.object({ maxFindings: z.number() }),
       execute: async () => "ok",
     };
-    const wrapped = wrapPlugin(
-      async () => ({ tool: { codemem_check: badTool } }),
-      { name: "codemem-style", telemetryPath: path },
-    );
+    const wrapped = wrapPlugin(async () => ({ tool: { codemem_check: badTool } }), {
+      name: "codemem-style",
+      telemetryPath: path,
+    });
     const hooks = await wrapped(stubInput);
     expect(Object.keys(hooks.tool ?? {})).toEqual([]);
     expect(readFileSync(path, "utf8")).toContain("plugin.validation_failed");
@@ -220,8 +308,8 @@ describe("wrapPlugin", () => {
     await chatParams({ sessionID: "s", agent: "a", model: {}, provider: {}, message: {} }, output);
     const meta = output.options.metadata;
     expect(meta).toBeDefined();
-    if (!meta || typeof meta !== "object") throw new Error("metadata not set");
-    const traceId = (meta as Record<string, unknown>).trace_id;
+    if (!isRecord(meta)) throw new Error("metadata not set");
+    const traceId = meta.trace_id;
     expect(typeof traceId).toBe("string");
     expect(String(traceId).startsWith("trc_")).toBe(true);
   });
@@ -236,11 +324,219 @@ describe("wrapPlugin", () => {
     );
     const hooks = await wrapped(stubInput);
     const pingRaw = hooks.tool?.ping;
-    if (!pingRaw || typeof pingRaw !== "object") throw new Error("ping not registered");
-    const execute = (pingRaw as { execute: (args: unknown, context: unknown) => Promise<unknown> }).execute;
+    const execute = getExecute(pingRaw, "ping");
     await execute({}, { sessionID: "s", callID: "c", metadata: { trace_id: "trc_test" } });
     const log = readFileSync(path, "utf8");
     expect(log).toContain('"tool.executed"');
     expect(log).toContain('"trace_id":"trc_test"');
+  });
+
+  test("canonical envelope emission validates through fleet contracts", async () => {
+    const path = trackTemp(tempTelemetry());
+    const wrapped = wrapPlugin(
+      async () => ({
+        tool: { ping: { description: "ping", args: {}, execute: async () => "pong" } },
+      }),
+      { name: "canonical", telemetryPath: path },
+    );
+    const hooks = await wrapped(stubInput);
+    const pingRaw = hooks.tool?.ping;
+    const execute = getExecute(pingRaw, "ping");
+    await execute({}, { sessionID: "s", callID: "c" });
+    const executed = telemetryByKind(path, "tool.executed").at(-1);
+    expect(executed).toBeDefined();
+    const validation = fleetContracts.validateTelemetryEnvelope(executed);
+    expect(validation.ok).toBe(true);
+  });
+
+  test("correlation_id from context.metadata.fleet flows to envelope", async () => {
+    const path = trackTemp(tempTelemetry());
+    const correlationId = fleetContracts.newCorrelationId();
+    const wrapped = wrapPlugin(
+      async () => ({
+        tool: { ping: { description: "ping", args: {}, execute: async () => "pong" } },
+      }),
+      { name: "correlator", telemetryPath: path },
+    );
+    const hooks = await wrapped(stubInput);
+    const pingRaw = hooks.tool?.ping;
+    const execute = getExecute(pingRaw, "ping");
+    await execute({}, { metadata: { fleet: { correlation_id: correlationId } } });
+    const executed = telemetryByKind(path, "tool.executed").at(-1);
+    expect(executed?.correlation_id).toBe(String(correlationId));
+  });
+
+  test("missing correlation_id generates a canonical correlation id", async () => {
+    const path = trackTemp(tempTelemetry());
+    const wrapped = wrapPlugin(
+      async () => ({
+        tool: { ping: { description: "ping", args: {}, execute: async () => "pong" } },
+      }),
+      { name: "generator", telemetryPath: path },
+    );
+    const hooks = await wrapped(stubInput);
+    const pingRaw = hooks.tool?.ping;
+    const execute = getExecute(pingRaw, "ping");
+    await execute({}, {});
+    const executed = telemetryByKind(path, "tool.executed").at(-1);
+    expect(typeof executed?.correlation_id).toBe("string");
+    expect(fleetContracts.parseCorrelationId(String(executed?.correlation_id)).ok).toBe(true);
+  });
+
+  test("fresh tool_call_id is generated per invocation", async () => {
+    const path = trackTemp(tempTelemetry());
+    const wrapped = wrapPlugin(
+      async () => ({
+        tool: { ping: { description: "ping", args: {}, execute: async () => "pong" } },
+      }),
+      { name: "tool-caller", telemetryPath: path },
+    );
+    const hooks = await wrapped(stubInput);
+    const pingRaw = hooks.tool?.ping;
+    const execute = getExecute(pingRaw, "ping");
+    await execute({}, {});
+    await execute({}, {});
+    const executed = telemetryByKind(path, "tool.executed");
+    const first = executed.at(-2)?.tool_call_id;
+    const second = executed.at(-1)?.tool_call_id;
+    expect(typeof first).toBe("string");
+    expect(typeof second).toBe("string");
+    expect(first).not.toBe(second);
+    expect(fleetContracts.parseToolCallId(String(first)).ok).toBe(true);
+    expect(fleetContracts.parseToolCallId(String(second)).ok).toBe(true);
+  });
+
+  test("defaultTimeoutMs returns E_TIMEOUT structured failure", async () => {
+    const path = trackTemp(tempTelemetry());
+    const wrapped = wrapPlugin(
+      async () => ({
+        tool: {
+          slow_tool: {
+            description: "slow",
+            args: {},
+            execute: async () => {
+              await sleep(300);
+              return "late";
+            },
+          },
+        },
+      }),
+      { name: "timeout", telemetryPath: path, defaultTimeoutMs: 100 },
+    );
+    const hooks = await wrapped(stubInput);
+    const slowRaw = hooks.tool?.slow_tool;
+    const execute = getExecute(slowRaw, "slow");
+    const result = await execute({}, {});
+    assertToolFailureResult(result);
+    expect(result.error.code).toBe("E_TIMEOUT");
+    expect(result.error.retryable).toBe(true);
+    const failed = telemetryByKind(path, "tool.failed").at(-1);
+    expect(readErrorField(failed, "code")).toBe("E_TIMEOUT");
+    expect(readErrorField(failed, "retryable")).toBe(true);
+  });
+
+  test("toolTimeouts per-tool override takes precedence over global default", async () => {
+    const path = trackTemp(tempTelemetry());
+    const wrapped = wrapPlugin(
+      async () => ({
+        tool: {
+          slow_tool: {
+            description: "slow",
+            args: {},
+            execute: async () => {
+              await sleep(200);
+              return "late";
+            },
+          },
+        },
+      }),
+      {
+        name: "timeout",
+        telemetryPath: path,
+        defaultTimeoutMs: 1000,
+        toolTimeouts: { slow_tool: 50 },
+      },
+    );
+    const hooks = await wrapped(stubInput);
+    const slowRaw = hooks.tool?.slow_tool;
+    const execute = getExecute(slowRaw, "slow");
+    const result = await execute({}, {});
+    assertToolFailureResult(result);
+    expect(result.error.code).toBe("E_TIMEOUT");
+  });
+
+  test("AbortSignal is passed to plugins and fires on timeout", async () => {
+    let aborted = false;
+    const path = trackTemp(tempTelemetry());
+    const wrapped = wrapPlugin(
+      async () => ({
+        tool: {
+          slow_tool: {
+            description: "slow",
+            args: {},
+            execute: async (_args: unknown, ctx: unknown) => {
+              const signal = readSignal(ctx);
+              signal?.addEventListener("abort", () => {
+                aborted = true;
+              });
+              await sleep(200);
+              return "late";
+            },
+          },
+        },
+      }),
+      { name: "abortable", telemetryPath: path, defaultTimeoutMs: 50 },
+    );
+    const hooks = await wrapped(stubInput);
+    const slowRaw = hooks.tool?.slow_tool;
+    const execute = getExecute(slowRaw, "slow");
+    await execute({}, {});
+    expect(aborted).toBe(true);
+  });
+
+  test("tool execute receives injected context.metadata.fleet without mutating caller context", async () => {
+    let observedToolCallId: unknown;
+    const path = trackTemp(tempTelemetry());
+    const wrapped = wrapPlugin(
+      async () => ({
+        tool: {
+          ping: {
+            description: "ping",
+            args: {},
+            execute: async (_args: unknown, ctx: unknown) => {
+              observedToolCallId = readToolCallId(ctx);
+              return "pong";
+            },
+          },
+        },
+      }),
+      { name: "fleet-context", telemetryPath: path },
+    );
+    const hooks = await wrapped(stubInput);
+    const pingRaw = hooks.tool?.ping;
+    const execute = getExecute(pingRaw, "ping");
+    const originalContext = { metadata: {} };
+    await execute({}, originalContext);
+    expect(fleetContracts.parseToolCallId(String(observedToolCallId)).ok).toBe(true);
+    expect(originalContext.metadata).toEqual({});
+  });
+
+  test("tool.execute.before hook receives injected args.metadata.fleet", async () => {
+    let observedToolCallId: unknown;
+    const path = trackTemp(tempTelemetry());
+    const wrapped = wrapPlugin(
+      async () => ({
+        "tool.execute.before": async (_input: unknown, output: { args: unknown }) => {
+          observedToolCallId = readToolCallId(output.args);
+        },
+        tool: { ping: { description: "ping", args: {}, execute: async () => "pong" } },
+      }),
+      { name: "before-hook", telemetryPath: path },
+    );
+    const hooks = await wrapped(stubInput);
+    const before = hooks["tool.execute.before"];
+    if (!before) throw new Error("before hook not registered");
+    await before({ tool: "ping", sessionID: "s", callID: "c" }, { args: {} });
+    expect(fleetContracts.parseToolCallId(String(observedToolCallId)).ok).toBe(true);
   });
 });

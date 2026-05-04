@@ -15,6 +15,8 @@
  * requiring them to share a single physical install.
  */
 
+import type { FleetContext } from "@jackmazac/opencode-fleet-contracts";
+
 /**
  * A minimum Plugin-shaped function. Consumers pass their own typed
  * Plugin and TypeScript infers the parameter types from the call site.
@@ -40,7 +42,13 @@ export type AnyHooks = {
   "chat.message"?: (input: unknown, output: unknown) => Promise<void>;
   "chat.params"?: (
     input: unknown,
-    output: { temperature?: number; topP?: number; topK?: number; maxOutputTokens?: number; options?: Record<string, unknown> },
+    output: {
+      temperature?: number;
+      topP?: number;
+      topK?: number;
+      maxOutputTokens?: number;
+      options?: Record<string, unknown>;
+    },
   ) => Promise<void>;
   "chat.headers"?: (input: unknown, output: unknown) => Promise<void>;
   "permission.ask"?: (input: unknown, output: unknown) => Promise<void>;
@@ -67,6 +75,10 @@ export type AnyHooks = {
   provider?: unknown;
 };
 
+export type FleetContextSource = "args" | "metadata" | "generated";
+
+export type ToolTimeoutOverrides = Record<string, number>;
+
 export type WrapOptions = {
   /** Stable plugin name used in telemetry and error messages. */
   name: string;
@@ -92,7 +104,104 @@ export type WrapOptions = {
    * the same id. Default false (opt-in to avoid surprising hook semantics).
    */
   propagateTraceId?: boolean;
+
+  /**
+   * Propagate canonical fleet IDs through `context.metadata.fleet` before
+   * invoking wrapped tools and selected hooks. Default true.
+   */
+  propagateFleetContext?: boolean;
+
+  /**
+   * Global timeout, in milliseconds, for each wrapped tool execution.
+   * Default 120_000.
+   */
+  defaultTimeoutMs?: number;
+
+  /**
+   * Per-tool timeout overrides, keyed by tool name, in milliseconds. Values
+   * here take precedence over `defaultTimeoutMs`.
+   */
+  toolTimeouts?: ToolTimeoutOverrides;
+
+  /**
+   * Return the legacy `❌ [plugin].tool failed: message` string when a wrapped
+   * tool throws or times out. Default false, which returns ToolFailureResult.
+   */
+  legacyErrorString?: boolean;
 };
+
+export type ToolFailureResult = {
+  ok: false;
+  schema_version: 1;
+  plugin: string;
+  tool: string;
+  message: string;
+  error: { name: string; message: string; code?: string; retryable?: boolean };
+  workspace_id: string | null;
+  plan_id: string | null;
+  plan_slug: string | null;
+  wave_id: string | null;
+  agent_run_id: string | null;
+  correlation_id: string | null;
+  tool_call_id: string | null;
+  fleet_run_id: string | null;
+};
+
+export type ExtractedFleetContext = {
+  context: FleetContext;
+  source: FleetContextSource;
+};
+
+export function assertToolFailureResult(value: unknown): asserts value is ToolFailureResult {
+  if (!isRecord(value)) throw new Error("expected ToolFailureResult object");
+  if (value.ok !== false) throw new Error("ToolFailureResult.ok must be false");
+  if (value.schema_version !== 1) throw new Error("ToolFailureResult.schema_version must be 1");
+  requireStringField(value, "plugin");
+  requireStringField(value, "tool");
+  requireStringField(value, "message");
+  if (!isRecord(value.error)) throw new Error("ToolFailureResult.error must be an object");
+  requireStringField(value.error, "name");
+  requireStringField(value.error, "message");
+  optionalStringField(value.error, "code");
+  optionalBooleanField(value.error, "retryable");
+  requireNullableStringField(value, "workspace_id");
+  requireNullableStringField(value, "plan_id");
+  requireNullableStringField(value, "plan_slug");
+  requireNullableStringField(value, "wave_id");
+  requireNullableStringField(value, "agent_run_id");
+  requireNullableStringField(value, "correlation_id");
+  requireNullableStringField(value, "tool_call_id");
+  requireNullableStringField(value, "fleet_run_id");
+}
+
+function requireStringField(record: Record<string, unknown>, field: string): void {
+  if (typeof record[field] !== "string") throw new Error(`${field} must be a string`);
+}
+
+function requireNullableStringField(record: Record<string, unknown>, field: string): void {
+  const value = record[field];
+  if (value !== null && typeof value !== "string") {
+    throw new Error(`${field} must be a string or null`);
+  }
+}
+
+function optionalStringField(record: Record<string, unknown>, field: string): void {
+  const value = record[field];
+  if (value !== undefined && typeof value !== "string") {
+    throw new Error(`${field} must be a string when present`);
+  }
+}
+
+function optionalBooleanField(record: Record<string, unknown>, field: string): void {
+  const value = record[field];
+  if (value !== undefined && typeof value !== "boolean") {
+    throw new Error(`${field} must be a boolean when present`);
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
 
 export type ToolLike = {
   description?: unknown;
@@ -100,9 +209,7 @@ export type ToolLike = {
   execute?: unknown;
 };
 
-export type ToolValidationResult =
-  | { ok: true }
-  | { ok: false; errors: string[] };
+export type ToolValidationResult = { ok: true } | { ok: false; errors: string[] };
 
 export type ToolDefinitionResolved = {
   description: string;

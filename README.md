@@ -51,20 +51,17 @@ export default wrapPlugin(MyPlugin, { name: "my-plugin" });
    - Asserts `execute` is a function.
    - Catches the `args: z.object({...})` bug at registration with a clear error.
 
-2. **Wraps tool `execute` in try/catch.** A thrown error returns a structured string (`❌ [plugin].toolName failed: ...`) instead of propagating into opencode's Effect pipeline.
+2. **Wraps tool `execute` in try/catch.** A thrown error returns a structured `ToolFailureResult` object by default instead of propagating into opencode's Effect pipeline. Set `legacyErrorString: true` to restore the old `❌ [plugin].toolName failed: ...` string while a consumer migrates.
 
 3. **Filters bad entries from `experimental.chat.system.transform` output.** `null`, `undefined`, and empty strings in `o.system` are removed.
 
 4. **Wraps `tool.execute.after`** so synchronous throws are logged and swallowed instead of crashing the host.
 
-5. **Emits structured ndjson telemetry** to `~/.local/share/opencode/log/plugin-lifecycle.jsonl`:
-   - `plugin.loaded` — `{ts, plugin, durationMs, toolCount, hookKinds}`
-   - `plugin.failed` — `{ts, plugin, durationMs, error: {message, stack, name}}`
-   - `plugin.validation_failed` — `{ts, plugin, message}`
-   - `tool.executed` — `{ts, plugin, tool, durationMs, status, sessionID, callID, argDigest}`
-   - `tool.failed` — same as above plus `{error: {message, stack, name}}`
-   - `hook.failed` — `{ts, plugin, hook, tool, sessionID, error}`
-   - `trace.propagated` — `{ts, plugin, tool, sessionID, callID, trace_id}` (only with `propagateTraceId`)
+5. **Emits structured ndjson telemetry** to `~/.local/share/opencode/log/plugin-lifecycle.jsonl` using the canonical `FleetTelemetryEnvelope` shape:
+   - `plugin.loaded`, `plugin.failed`, `plugin.validation_failed`
+   - `tool.executed`, `tool.failed`
+   - `hook.failed`
+   - `trace.propagated` (for legacy `trace_id` and fleet context propagation)
 
    Argument digests are key/type/size only; full payloads are never logged.
 
@@ -86,6 +83,18 @@ type WrapOptions = {
 
   /** Inject and propagate trace_id through chat.params and tool.execute.before. */
   propagateTraceId?: boolean;
+
+  /** Propagate canonical fleet IDs through context.metadata.fleet. Default true. */
+  propagateFleetContext?: boolean;
+
+  /** Global wrapped tool timeout in milliseconds. Default 120_000. */
+  defaultTimeoutMs?: number;
+
+  /** Per-tool timeout overrides in milliseconds. */
+  toolTimeouts?: Record<string, number>;
+
+  /** Return legacy failure strings instead of ToolFailureResult. Default false. */
+  legacyErrorString?: boolean;
 };
 ```
 
@@ -160,6 +169,12 @@ Both resolve to the same module instance (verified in `test/compat.test.ts`). Na
 
 See the contracts package README (`~/Developer/opencode-fleet-contracts/README.md` or the published docs) for full API.
 
-### Wave 1 direction
+## Wave 1: ID threading + structured failures + timeouts
 
-In the current plan (`fleet-correlation`), Wave 1 migrates Host Adapter's telemetry emitter to use `FleetTelemetryEnvelope` directly (today's per-event shapes become the canonical envelope with correlation IDs) and moves tool-execute failures from string to structured `ToolFailureResult`. See the persisted plan for the full Wave 1 task list.
+Wave 1 makes Host Adapter the fleet boundary for correlation. Wrapped tool executions now read fleet IDs from `context.metadata.fleet` first, then flat snake_case metadata fields, then matching fields under `args.metadata`. If a `correlation_id` is missing, Host Adapter generates one with the contracts package; every tool execution also receives a fresh `tool_call_id`, and missing `workspace_id` is derived from the current worktree path. With `propagateFleetContext` enabled (the default), the wrapped `ctx` passed to the plugin is shallow-copied and overlaid with `ctx.metadata.fleet` so downstream code can observe the canonical IDs without mutating the caller's object.
+
+Telemetry is now contract-valid `FleetTelemetryEnvelope` NDJSON. The sink path and `OPENCODE_HOST_ADAPTER_TELEMETRY` override are unchanged, and argument payloads are still never logged directly; only the existing key/type/size digest is emitted as an adapter-local extension.
+
+Tool failures return `ToolFailureResult` by default: `{ ok:false, schema_version:1, plugin, tool, message, error, ...ids }`. Consumers that still assert on the old display string can temporarily pass `legacyErrorString: true`; new code should consume the structured object and display its `message` field.
+
+Tool execution is timeout-protected. The default is `120_000` ms, configurable globally with `defaultTimeoutMs` or per tool with `toolTimeouts`. The adapter passes an `AbortSignal` on `ctx.signal`; plugins that opt in can stop early when it aborts. A timeout returns/emits `error.code = "E_TIMEOUT"` and `retryable = true`.

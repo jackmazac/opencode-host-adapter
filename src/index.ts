@@ -23,14 +23,19 @@
  *   export default wrapPlugin(MyPlugin, { name: "my-plugin" });
  */
 
-export { wrapPlugin } from "./wrap.ts";
+export { extractFleetContext, wrapPlugin } from "./wrap.ts";
 export { looksLikeZodSchema, validateToolDefinition, validateToolDefinitions } from "./validate.ts";
-export { argDigest, emit, errorPayload, resolveTelemetryPath } from "./telemetry.ts";
+export { argDigest, emit, emitFleet, errorPayload, resolveTelemetryPath } from "./telemetry.ts";
+export { assertToolFailureResult } from "./types.ts";
 export type {
   AnyHooks,
   AnyPlugin,
+  ExtractedFleetContext,
+  FleetContextSource,
   ToolDefinitionResolved,
+  ToolFailureResult,
   ToolLike,
+  ToolTimeoutOverrides,
   ToolValidationResult,
   WrapOptions,
 } from "./types.ts";
