@@ -351,12 +351,21 @@ function installFleetHookPropagation(wrappedHooks: AnyHooks, opts: WrapOptions):
   if (!originalBefore) return;
   wrappedHooks["tool.execute.before"] = async (i, o) => {
     const toolCallId = newToolCallId();
+    // Merge the real input args (from the hook's `input` parameter) with any
+    // caller-provided output overrides so neither set is dropped.
+    // o.args is the output side — often `{}` in OpenCode's default hook call.
+    // i.args (when present) carries the actual tool input (patchText, filePath, etc.).
+    // If both are absent, fleet metadata is still injected as {metadata:{fleet:...}}.
+    const inputArgs = isRecord(i.args) ? i.args : undefined;
+    const outputArgs = isRecord(o.args) ? o.args : undefined;
+    const baseArgs: Record<string, unknown> =
+      inputArgs && outputArgs ? { ...inputArgs, ...outputArgs } : (inputArgs ?? outputArgs ?? {});
     const fleet = prepareToolFleetContext(
-      { metadata: readMetadataCandidate(o.args) },
-      o.args,
+      { metadata: readMetadataCandidate(baseArgs) },
+      baseArgs,
       toolCallId,
     );
-    o.args = withFleetMetadata(o.args, fleet.context);
+    o.args = withFleetMetadata(baseArgs, fleet.context);
     await originalBefore(i, o);
     emit(opts, {
       kind: "trace.propagated",

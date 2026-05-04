@@ -54,7 +54,7 @@ export type AnyHooks = {
   "permission.ask"?: (input: unknown, output: unknown) => Promise<void>;
   "command.execute.before"?: (input: unknown, output: unknown) => Promise<void>;
   "tool.execute.before"?: (
-    input: { tool: string; sessionID: string; callID: string },
+    input: { tool: string; sessionID: string; callID: string; args?: unknown },
     output: { args: unknown },
   ) => Promise<void>;
   "shell.env"?: (input: unknown, output: unknown) => Promise<void>;

@@ -539,4 +539,100 @@ describe("wrapPlugin", () => {
     await before({ tool: "ping", sessionID: "s", callID: "c" }, { args: {} });
     expect(fleetContracts.parseToolCallId(String(observedToolCallId)).ok).toBe(true);
   });
+
+  // ── Regression: HOTFIX-HA1 — tool.execute.before must preserve input args ──
+
+  test("tool.execute.before preserves apply_patch input args when injecting fleet metadata", async () => {
+    let observedArgs: unknown;
+    const path = trackTemp(tempTelemetry());
+    const wrapped = wrapPlugin(
+      async () => ({
+        "tool.execute.before": async (_input: unknown, output: { args: unknown }) => {
+          observedArgs = output.args;
+        },
+        tool: { apply_patch: { description: "patch", args: {}, execute: async () => "ok" } },
+      }),
+      { name: "hotfix-ha1-patch", telemetryPath: path },
+    );
+    const hooks = await wrapped(stubInput);
+    const before = hooks["tool.execute.before"];
+    if (!before) throw new Error("before hook not registered");
+    // Simulate: input carries real tool args; output.args is empty (OpenCode default)
+    await before(
+      {
+        tool: "apply_patch",
+        sessionID: "s",
+        callID: "c",
+        args: { patchText: "hunk content", filePath: "/tmp/x" },
+      },
+      { args: {} },
+    );
+    if (!isRecord(observedArgs)) throw new Error("observed args must be a record");
+    // Original input args must survive injection
+    expect(observedArgs.patchText).toBe("hunk content");
+    expect(observedArgs.filePath).toBe("/tmp/x");
+    // Fleet metadata must also be present
+    expect(fleetContracts.parseToolCallId(String(readToolCallId(observedArgs))).ok).toBe(true);
+  });
+
+  test("tool.execute.before preserves edit tool args (filePath, oldString)", async () => {
+    let observedArgs: unknown;
+    const path = trackTemp(tempTelemetry());
+    const wrapped = wrapPlugin(
+      async () => ({
+        "tool.execute.before": async (_input: unknown, output: { args: unknown }) => {
+          observedArgs = output.args;
+        },
+        tool: { edit: { description: "edit", args: {}, execute: async () => "ok" } },
+      }),
+      { name: "hotfix-ha1-edit", telemetryPath: path },
+    );
+    const hooks = await wrapped(stubInput);
+    const before = hooks["tool.execute.before"];
+    if (!before) throw new Error("before hook not registered");
+    await before(
+      {
+        tool: "edit",
+        sessionID: "s",
+        callID: "c",
+        args: { filePath: "/tmp/foo.ts", oldString: "old code", newString: "new code" },
+      },
+      { args: {} },
+    );
+    if (!isRecord(observedArgs)) throw new Error("observed args must be a record");
+    expect(observedArgs.filePath).toBe("/tmp/foo.ts");
+    expect(observedArgs.oldString).toBe("old code");
+    expect(observedArgs.newString).toBe("new code");
+    expect(fleetContracts.parseToolCallId(String(readToolCallId(observedArgs))).ok).toBe(true);
+  });
+
+  test("tool.execute.before preserves write tool args (content)", async () => {
+    let observedArgs: unknown;
+    const path = trackTemp(tempTelemetry());
+    const wrapped = wrapPlugin(
+      async () => ({
+        "tool.execute.before": async (_input: unknown, output: { args: unknown }) => {
+          observedArgs = output.args;
+        },
+        tool: { write: { description: "write", args: {}, execute: async () => "ok" } },
+      }),
+      { name: "hotfix-ha1-write", telemetryPath: path },
+    );
+    const hooks = await wrapped(stubInput);
+    const before = hooks["tool.execute.before"];
+    if (!before) throw new Error("before hook not registered");
+    await before(
+      {
+        tool: "write",
+        sessionID: "s",
+        callID: "c",
+        args: { filePath: "/tmp/out.txt", content: "hello world" },
+      },
+      { args: {} },
+    );
+    if (!isRecord(observedArgs)) throw new Error("observed args must be a record");
+    expect(observedArgs.filePath).toBe("/tmp/out.txt");
+    expect(observedArgs.content).toBe("hello world");
+    expect(fleetContracts.parseToolCallId(String(readToolCallId(observedArgs))).ok).toBe(true);
+  });
 });
