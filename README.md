@@ -129,3 +129,37 @@ runPluginContractTests({
 ## License
 
 MIT
+
+## Fleet Contracts
+
+Host Adapter re-exports `@jackmazac/opencode-fleet-contracts` so plugin authors can get the canonical fleet ID model, telemetry envelope, artifact references, and health report types without adding a second dependency. Two import shapes:
+
+**Namespace (recommended when you already import `wrapPlugin`):**
+
+```ts
+import { wrapPlugin, fleetContracts } from "@jackmazac/opencode-host-adapter";
+
+fleetContracts.validateTelemetryEnvelope(envelope);
+const runId = fleetContracts.newAgentRunId();
+```
+
+**Subpath (flat re-export):**
+
+```ts
+import { validateTelemetryEnvelope, newAgentRunId } from "@jackmazac/opencode-host-adapter/contracts";
+```
+
+Both resolve to the same module instance (verified in `test/compat.test.ts`). Namespace form avoids any future naming collision with Host Adapter's own surface.
+
+### What the contracts package defines
+
+- **IDs** — `workspace_id / plan_id / plan_slug / wave_id / agent_run_id / correlation_id / tool_call_id / spine_seq / artifact_ref / lifecycle_object_id / concord_event_id / fleet_run_id`. Branded types + ULID generation + legacy parsers.
+- **Telemetry envelope** — single canonical shape; every fleet plugin emits the same fields through Host Adapter.
+- **Artifact references** — 14 kinds, content-addressed, canonical string form `artifact:<kind>:<url-encoded path>:sha256:<hex>`.
+- **Health report** — `{status: "ok"|"warn"|"fail", checks[], summary, ...}` used by every `{plugin} doctor|status|check --json` and `opencode-fleet doctor`.
+
+See the contracts package README (`~/Developer/opencode-fleet-contracts/README.md` or the published docs) for full API.
+
+### Wave 1 direction
+
+In the current plan (`fleet-correlation`), Wave 1 migrates Host Adapter's telemetry emitter to use `FleetTelemetryEnvelope` directly (today's per-event shapes become the canonical envelope with correlation IDs) and moves tool-execute failures from string to structured `ToolFailureResult`. See the persisted plan for the full Wave 1 task list.

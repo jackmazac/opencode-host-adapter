@@ -24,11 +24,7 @@
  */
 
 export { wrapPlugin } from "./wrap.ts";
-export {
-  looksLikeZodSchema,
-  validateToolDefinition,
-  validateToolDefinitions,
-} from "./validate.ts";
+export { looksLikeZodSchema, validateToolDefinition, validateToolDefinitions } from "./validate.ts";
 export { argDigest, emit, errorPayload, resolveTelemetryPath } from "./telemetry.ts";
 export type {
   AnyHooks,
@@ -38,3 +34,8 @@ export type {
   ToolValidationResult,
   WrapOptions,
 } from "./types.ts";
+
+// Fleet contracts re-export — see ./contracts for the subpath export.
+// Root namespace export avoids naming conflicts with Host Adapter's own
+// types (e.g. ToolValidationResult, WrapOptions) by using a namespace.
+export * as fleetContracts from "@jackmazac/opencode-fleet-contracts";

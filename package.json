@@ -20,7 +20,8 @@
   ],
   "exports": {
     ".": "./src/index.ts",
-    "./contract-test": "./src/contract-test.ts"
+    "./contract-test": "./src/contract-test.ts",
+    "./contracts": "./src/contracts.ts"
   },
   "bin": {
     "opencode-check-no-zod-import": "./src/cli/check-no-zod-import.ts",
@@ -32,6 +33,9 @@
     "README.md",
     "LICENSE"
   ],
+  "dependencies": {
+    "@jackmazac/opencode-fleet-contracts": "file:../opencode-fleet-contracts"
+  },
   "peerDependencies": {
     "@opencode-ai/plugin": ">=1.14.0"
   },
