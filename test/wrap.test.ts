@@ -12,6 +12,8 @@ import { join } from "node:path";
 import { tool } from "@opencode-ai/plugin";
 import {
   assertToolFailureResult,
+  ERROR_TIMEOUT,
+  ERROR_TOOL_ARGS_INVALID,
   fleetContracts,
   validateToolDefinitions,
   wrapPlugin,
@@ -241,7 +243,7 @@ describe("wrapPlugin", () => {
     expect(result.plugin).toBe("validator");
     expect(result.tool).toBe("required");
     expect(result.error.name).toBe("ToolArgsValidationError");
-    expect(result.error.code).toBe("E_TOOL_ARGS_INVALID");
+    expect(result.error.code).toBe(ERROR_TOOL_ARGS_INVALID);
     expect(result.error.retryable).toBe(false);
     expect(result.error.message).toContain('arg "msg"');
     expect(readFileSync(path, "utf8")).toContain('"tool.failed"');
@@ -492,10 +494,10 @@ describe("wrapPlugin", () => {
     const execute = getExecute(slowRaw, "slow");
     const result = await execute({}, {});
     assertToolFailureResult(result);
-    expect(result.error.code).toBe("E_TIMEOUT");
+    expect(result.error.code).toBe(ERROR_TIMEOUT);
     expect(result.error.retryable).toBe(true);
     const failed = telemetryByKind(path, "tool.failed").at(-1);
-    expect(readErrorField(failed, "code")).toBe("E_TIMEOUT");
+    expect(readErrorField(failed, "code")).toBe(ERROR_TIMEOUT);
     expect(readErrorField(failed, "retryable")).toBe(true);
   });
 
@@ -526,7 +528,7 @@ describe("wrapPlugin", () => {
     const execute = getExecute(slowRaw, "slow");
     const result = await execute({}, {});
     assertToolFailureResult(result);
-    expect(result.error.code).toBe("E_TIMEOUT");
+    expect(result.error.code).toBe(ERROR_TIMEOUT);
   });
 
   test("AbortSignal is passed to plugins and fires on timeout", async () => {

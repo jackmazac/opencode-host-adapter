@@ -23,7 +23,7 @@ IDs, telemetry envelope, artifact references, and health reports live in `@jackm
 
 - **No product logic.** No memory, no locks, no code graph, no plans, no session state. Those live in their respective plugins.
 - **No silent telemetry drops.** If a telemetry emit fails, log to stderr. Never throw from a telemetry path. Never silently discard an event.
-- **No default behavior changes without a flag.** Every behavioral change must be gated behind a new opt-in `WrapOptions` field with a safe default that preserves prior behavior.
+- **No default behavior changes without a migration story.** User-visible or output-shape behavior changes need an opt-in flag or major-version migration. Safety hardening that converts host crashes into structured failures may be default-on when contract tests and docs are updated.
 - **No public export renames.** `wrapPlugin`, `validateToolDefinitions`, `runPluginContractTests`, `ToolFailureResult`, `WrapOptions`, `assertToolFailureResult` — every plugin imports these. Renaming without a major version bump is a breaking change.
 - **No Zod in arg schemas.** We actively catch this bug in the validator (`args: z.object({...})` instead of plain object literal). Don't introduce Zod usage in Host Adapter tooling itself.
 - **No network calls.** Host Adapter is a local safety layer. It writes to disk (telemetry) and reads from context. Nothing more.
@@ -49,6 +49,14 @@ Wave 1 hotfix `eb3f323` fixed a bug where input tool args (`patchText`, `filePat
 ### Runtime tool args are always validated
 
 Wrapped tools validate every runtime `args` object against the tool's declared raw-shape schemas before `execute` runs. Invalid payloads return `ToolFailureResult` with `error.code = "E_TOOL_ARGS_INVALID"`. Do not add an opt-out; this boundary prevents handler-level crashes such as `undefined is not an object`, `r.split`, path helpers receiving `undefined`, or file writes receiving missing content.
+
+### Error taxonomy is stable
+
+Boundary failures use exported constants from `src/errors.ts`. Use `ERROR_TOOL_ARGS_INVALID` and `ERROR_TIMEOUT` in tests instead of string literals when practical. New Host Adapter error codes must be documented in the README's Error Taxonomy table and covered by either `runPluginContractTests` or focused unit tests.
+
+### Hook boundary policy
+
+Hooks must never receive less information after Host Adapter decoration than OpenCode supplied originally. If a hook injects metadata, merge it with caller-provided input/output values; never replace the entire args object with metadata-only state. Hook wrappers should catch plugin throws, emit `hook.failed`, and avoid crashing OpenCode unless the hook's public contract explicitly requires propagation.
 
 ## Type safety rules
 
@@ -80,7 +88,7 @@ Every plugin calls `wrapPlugin(TheirPlugin, { name: "..." })` and gets validatio
 ```bash
 # In this repo:
 bun run typecheck
-bun test                      # expect 36 tests across 2 files
+bun test                      # expect 40 tests across 3 files
 
 # Downstream smoke (changes here ripple to every plugin):
 cd ~/Developer/opencode-conductor && bun run check
@@ -104,6 +112,13 @@ Changes here affect every plugin. Before shipping:
 3. Update the README's `WrapOptions` table, `ToolFailureResult` section, or Telemetry section as appropriate.
 4. Bump `schema_version` in `@jackmazac/opencode-fleet-contracts` ONLY if the `FleetTelemetryEnvelope` shape is breaking — additive fields do not require a bump.
 5. After publishing, downstream plugins should bump their dep ranges.
+
+## Migration policy
+
+Host Adapter changes fall into two buckets:
+
+- Safety hardening: catches malformed plugin/runtime behavior earlier and returns structured failures. These may be default-on when they preserve public result shapes and are covered in `runPluginContractTests`.
+- Shape migrations: rename exports, alter `ToolFailureResult`, change telemetry envelope semantics, or remove compatibility flags. These require explicit migration notes and usually a major version bump.
 
 ## Links
 

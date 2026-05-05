@@ -96,6 +96,17 @@ type ToolFailureResult = {
 
 Use `assertToolFailureResult(value)` (exported from root) to narrow an unknown return value at runtime.
 
+## Error Taxonomy
+
+Host Adapter owns stable boundary error codes so downstream plugins can assert behavior without matching display strings.
+
+| Code | Error name | Retryable | Meaning |
+|---|---|---:|---|
+| `E_TOOL_ARGS_INVALID` | `ToolArgsValidationError` | `false` | Runtime tool args were missing, non-object, or failed a declared arg schema before `execute` ran. |
+| `E_TIMEOUT` | `TimeoutError` | `true` | Wrapped tool execution exceeded `defaultTimeoutMs` or its `toolTimeouts` override. |
+
+The root export includes `ERROR_TOOL_ARGS_INVALID`, `ERROR_TIMEOUT`, `ToolArgsValidationError`, `HostAdapterErrorCode`, `validateToolArgs`, and `ToolArgs` for tests and downstream boundary assertions.
+
 ## Telemetry
 
 Every wrapped lifecycle event emits a canonical `FleetTelemetryEnvelope` line to NDJSON at `~/.local/share/opencode/log/plugin-lifecycle.jsonl`. Override with `WrapOptions.telemetryPath` or `OPENCODE_HOST_ADAPTER_TELEMETRY`.
@@ -148,7 +159,7 @@ runPluginContractTests({
 });
 ```
 
-Asserts: module loads, default export is a function, plugin resolves hooks, all listed tools are present with well-formed definitions, canonical telemetry is emitted, and structured failures work via injected context.
+Asserts: module loads, default export is a function, plugin resolves hooks, all listed tools are present with well-formed definitions, canonical telemetry is emitted, malformed runtime args produce `E_TOOL_ARGS_INVALID` before `execute`, and structured failures work via injected context.
 
 ## Standalone validator
 
@@ -166,6 +177,12 @@ if (!result.ok) {
 
 `extractFleetContext(ctx)` is also exported for plugins that need to inspect or log the resolved fleet IDs before calling their own logic.
 
+## Migration Policy
+
+Host Adapter is a fleet boundary package. Additive exports and stricter safety checks are allowed when they convert host crashes into structured failures. Existing public names and result shapes stay stable unless the package takes a major-version migration.
+
+When changing boundary behavior, update `runPluginContractTests` first so every plugin gets the same regression coverage. Keep compatibility flags only for output-shape migrations such as `legacyErrorString`; do not add opt-outs for safety invariants like runtime arg validation.
+
 ## Binaries
 
 - `opencode-check-no-zod-import` — enforce no direct zod imports at the plugin boundary (lints plugin files for forbidden zod imports).
@@ -178,7 +195,7 @@ Both print actionable error messages and exit non-zero on violation, suitable fo
 ```bash
 bun install
 bun run typecheck
-bun test    # expect 34 tests across 2 files
+bun test    # expect 40 tests across 3 files
 ```
 
 ## License

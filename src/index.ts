@@ -24,8 +24,15 @@
  */
 
 export { extractFleetContext, wrapPlugin } from "./wrap.ts";
+export {
+  ERROR_TIMEOUT,
+  ERROR_TOOL_ARGS_INVALID,
+  ToolArgsValidationError,
+  type HostAdapterErrorCode,
+} from "./errors.ts";
 export { looksLikeZodSchema, validateToolDefinition, validateToolDefinitions } from "./validate.ts";
 export { argDigest, emit, emitFleet, errorPayload, resolveTelemetryPath } from "./telemetry.ts";
+export { validateToolArgs, type ToolArgs } from "./tool-args.ts";
 export { assertToolFailureResult } from "./types.ts";
 export type {
   AnyHooks,

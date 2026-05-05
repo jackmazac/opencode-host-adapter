@@ -33,6 +33,7 @@ import {
   parseToolCallId,
   validateTelemetryEnvelope,
 } from "@jackmazac/opencode-fleet-contracts";
+import { ERROR_TOOL_ARGS_INVALID } from "./errors.ts";
 import { wrapPlugin } from "./wrap.ts";
 import { assertToolFailureResult } from "./types.ts";
 import { validateToolDefinitions } from "./validate.ts";
@@ -212,6 +213,39 @@ export function runPluginContractTests(opts: ContractTestOptions): void {
       expect(typeof legacyResult).toBe("string");
       expect(legacyResult).toBe(`❌ [${opts.pluginName}].crash failed: legacy boom`);
     });
+
+    test("wrapped mock tool rejects malformed runtime args before execute", async () => {
+      let called = false;
+      const wrapped = wrapPlugin(
+        async () => ({
+          tool: {
+            required: {
+              description: "requires msg",
+              args: { msg: requiredStringSchema() },
+              execute: async () => {
+                called = true;
+                return "should not run";
+              },
+            },
+          },
+        }),
+        { name: opts.pluginName, telemetryPath: tempTelemetryPath() },
+      );
+      const hooks = await wrapped(opts.stubInput());
+      const requiredTool = hooks.tool?.required;
+      if (!isRecord(requiredTool) || typeof requiredTool.execute !== "function") {
+        throw new Error("required tool not registered");
+      }
+
+      const result = await requiredTool.execute(undefined, {});
+
+      assertToolFailureResult(result);
+      expect(called).toBe(false);
+      expect(result.error.name).toBe("ToolArgsValidationError");
+      expect(result.error.code).toBe(ERROR_TOOL_ARGS_INVALID);
+      expect(result.error.retryable).toBe(false);
+      expect(result.error.message).toContain('arg "msg"');
+    });
   });
 }
 
@@ -303,4 +337,16 @@ function readLastNdjsonObject(path: string): unknown {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function requiredStringSchema(): Record<string, unknown> {
+  return {
+    _zod: true,
+    safeParse(
+      value: unknown,
+    ): { success: true; data: string } | { success: false; error: unknown } {
+      if (typeof value === "string") return { success: true, data: value };
+      return { success: false, error: { issues: [{ message: "expected string" }] } };
+    },
+  };
 }
