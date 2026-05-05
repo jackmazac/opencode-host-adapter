@@ -34,7 +34,7 @@ export type AnyHooks = {
     {
       description: string;
       args: Record<string, unknown>;
-      execute: (args: Record<string, unknown>, context: unknown) => Promise<unknown>;
+      execute: (args: unknown, context: unknown) => Promise<unknown>;
     }
   >;
   event?: (input: { event: unknown }) => Promise<void>;

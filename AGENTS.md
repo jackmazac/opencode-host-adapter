@@ -46,6 +46,10 @@ This default enables correlation threading for all fleet plugins. If your change
 
 Wave 1 hotfix `eb3f323` fixed a bug where input tool args (`patchText`, `filePath`, `oldString`, `content`, etc.) were replaced by a metadata-only object during fleet context injection. The fix merges `inputArgs` before the overlay. If you touch `tool.execute.before` propagation, the three regression tests in `test/wrap.test.ts` (`apply_patch`, `edit`, `write`) must still pass.
 
+### Runtime tool args are always validated
+
+Wrapped tools validate every runtime `args` object against the tool's declared raw-shape schemas before `execute` runs. Invalid payloads return `ToolFailureResult` with `error.code = "E_TOOL_ARGS_INVALID"`. Do not add an opt-out; this boundary prevents handler-level crashes such as `undefined is not an object`, `r.split`, path helpers receiving `undefined`, or file writes receiving missing content.
+
 ## Type safety rules
 
 - **No `as` on unknown data.** Use `isRecord()` guards, `typeof` checks, and custom type predicates. Tests may use `// @ts-expect-error` to construct intentionally-malformed inputs for runtime guard testing.
@@ -76,7 +80,7 @@ Every plugin calls `wrapPlugin(TheirPlugin, { name: "..." })` and gets validatio
 ```bash
 # In this repo:
 bun run typecheck
-bun test                      # expect 34 tests across 2 files
+bun test                      # expect 36 tests across 2 files
 
 # Downstream smoke (changes here ripple to every plugin):
 cd ~/Developer/opencode-conductor && bun run check

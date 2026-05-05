@@ -50,6 +50,7 @@ export default wrapPlugin(ConductorPlugin, { name: "conductor" });
 ## What the wrapper does
 
 - **Validates tool definitions at load.** Asserts `args` is a plain object literal (not a `ZodObject`), `description` is a non-empty string, and `execute` is a function. Catches `args: z.object({...})` at registration with a clear error before OpenCode introspects the malformed tool.
+- **Validates runtime tool args.** Each call is checked against the declared `args` schemas before `execute` runs. Invalid payloads return `ToolFailureResult` with `error.code = "E_TOOL_ARGS_INVALID"`.
 - **Catches `execute` throws and returns `ToolFailureResult`.** A thrown error returns a structured object (`ok: false`, plugin name, tool name, error detail, all correlation IDs) instead of propagating into OpenCode's Effect pipeline. Set `legacyErrorString: true` to restore the old display string while a consumer migrates.
 - **Enforces per-tool timeouts via `AbortSignal`.** Default 2 minutes. The signal is passed on `ctx.signal`. A timeout emits `error.code = "E_TIMEOUT"` and `retryable = true`.
 - **Propagates fleet correlation IDs.** With `propagateFleetContext: true` (default), reads IDs from `ctx.metadata.fleet`, flat snake_case metadata, or `args.metadata`. Missing `correlation_id` is generated; every call also gets a fresh `tool_call_id`. The wrapped `ctx` is shallow-copied — the caller's object is not mutated.

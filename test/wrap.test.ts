@@ -212,6 +212,70 @@ describe("wrapPlugin", () => {
     expect(readFileSync(path, "utf8")).toContain('"tool.failed"');
   });
 
+  test("validates runtime tool args before calling execute", async () => {
+    const path = trackTemp(tempTelemetry());
+    let called = false;
+    const wrapped = wrapPlugin(
+      async () => ({
+        tool: {
+          required: {
+            description: "requires msg",
+            args: { msg: z.string() },
+            execute: async () => {
+              called = true;
+              return "should not run";
+            },
+          },
+        },
+      }),
+      { name: "validator", telemetryPath: path },
+    );
+    const hooks = await wrapped(stubInput);
+    const requiredRaw = hooks.tool?.required;
+    const execute = getExecute(requiredRaw, "required");
+
+    const result = await execute(undefined, {});
+
+    assertToolFailureResult(result);
+    expect(called).toBe(false);
+    expect(result.plugin).toBe("validator");
+    expect(result.tool).toBe("required");
+    expect(result.error.name).toBe("ToolArgsValidationError");
+    expect(result.error.code).toBe("E_TOOL_ARGS_INVALID");
+    expect(result.error.retryable).toBe(false);
+    expect(result.error.message).toContain('arg "msg"');
+    expect(readFileSync(path, "utf8")).toContain('"tool.failed"');
+  });
+
+  test("normalizes missing args to empty object for optional-only tools", async () => {
+    const path = trackTemp(tempTelemetry());
+    let observed: unknown;
+    const wrapped = wrapPlugin(
+      async () => ({
+        tool: {
+          optional: {
+            description: "optional msg",
+            args: { msg: z.string().optional() },
+            execute: async (args: unknown) => {
+              observed = args;
+              return "ok";
+            },
+          },
+        },
+      }),
+      { name: "validator", telemetryPath: path },
+    );
+    const hooks = await wrapped(stubInput);
+    const optionalRaw = hooks.tool?.optional;
+    const execute = getExecute(optionalRaw, "optional");
+
+    const result = await execute(undefined, {});
+
+    expect(result).toBe("ok");
+    expect(observed).toEqual({});
+    expect(readFileSync(path, "utf8")).toContain('"tool.executed"');
+  });
+
   test("legacyErrorString restores old tool failure string", async () => {
     const path = trackTemp(tempTelemetry());
     const wrapped = wrapPlugin(
