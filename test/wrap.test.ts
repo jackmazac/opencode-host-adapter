@@ -209,6 +209,7 @@ describe("wrapPlugin", () => {
     expect(result.plugin).toBe("crashy");
     expect(result.tool).toBe("crash");
     expect(result.message).toBe("❌ [crashy].crash failed: inside");
+    expect(result.output).toBe(result.message);
     expect(result.error.message).toBe("inside");
     expect(result.schema_version).toBe(1);
     expect(readFileSync(path, "utf8")).toContain('"tool.failed"');
@@ -242,6 +243,7 @@ describe("wrapPlugin", () => {
     expect(called).toBe(false);
     expect(result.plugin).toBe("validator");
     expect(result.tool).toBe("required");
+    expect(result.output).toBe(result.message);
     expect(result.error.name).toBe("ToolArgsValidationError");
     expect(result.error.code).toBe(ERROR_TOOL_ARGS_INVALID);
     expect(result.error.retryable).toBe(false);
@@ -325,6 +327,81 @@ describe("wrapPlugin", () => {
     const out = { system: [] as string[] };
     await transform({ sessionID: "s", model: {} }, out);
     expect(out.system).toEqual(["real entry"]);
+  });
+
+  test("repairs non-array system transform output", async () => {
+    const path = trackTemp(tempTelemetry());
+    const wrapped = wrapPlugin(
+      async () => ({
+        "experimental.chat.system.transform": async (
+          _input: unknown,
+          output: { system: unknown },
+        ) => {
+          output.system = "not an array";
+        },
+      }),
+      { name: "transformer", telemetryPath: path },
+    );
+    const hooks = await wrapped(stubInput);
+    const transform = hooks["experimental.chat.system.transform"];
+    if (!transform) throw new Error("transform hook not registered");
+    const out = { system: ["original"] };
+    await transform({ sessionID: "s", model: {} }, out);
+    expect(out.system).toEqual([]);
+  });
+
+  test("repairs simple OpenCode hook output shapes", async () => {
+    const path = trackTemp(tempTelemetry());
+    const wrapped = wrapPlugin(
+      async () => ({
+        "chat.headers": async (_input: unknown, output: Record<string, unknown>) => {
+          output.headers = { ok: "yes", bad: 1 };
+        },
+        "shell.env": async (_input: unknown, output: Record<string, unknown>) => {
+          output.env = "bad";
+        },
+        "experimental.session.compacting": async (
+          _input: unknown,
+          output: Record<string, unknown>,
+        ) => {
+          output.context = ["keep", undefined, ""];
+          output.prompt = 1;
+        },
+        "experimental.compaction.autocontinue": async (
+          _input: unknown,
+          output: Record<string, unknown>,
+        ) => {
+          output.enabled = "bad";
+        },
+        "experimental.text.complete": async (_input: unknown, output: Record<string, unknown>) => {
+          output.text = undefined;
+        },
+        "tool.definition": async (_input: unknown, output: Record<string, unknown>) => {
+          output.description = null;
+        },
+      }),
+      { name: "shape-guard", telemetryPath: path },
+    );
+    const hooks = await wrapped(stubInput);
+    const headers = { headers: {} };
+    await hooks["chat.headers"]?.({ sessionID: "s" }, headers);
+    expect(headers.headers).toEqual({ ok: "yes" });
+    const env: Record<string, unknown> = { env: { PATH: "/bin" } };
+    await hooks["shell.env"]?.({ cwd: "/tmp" }, env);
+    expect(env.env).toEqual({});
+    const compacting: Record<string, unknown> = { context: [], prompt: "old" };
+    await hooks["experimental.session.compacting"]?.({ sessionID: "s" }, compacting);
+    expect(compacting.context).toEqual(["keep"]);
+    expect("prompt" in compacting).toBe(false);
+    const autocontinue = { enabled: true };
+    await hooks["experimental.compaction.autocontinue"]?.({ sessionID: "s" }, autocontinue);
+    expect(autocontinue.enabled).toBe(true);
+    const complete = { text: "previous" };
+    await hooks["experimental.text.complete"]?.({ sessionID: "s" }, complete);
+    expect(complete.text).toBe("previous");
+    const definition = { description: "previous", parameters: {} };
+    await hooks["tool.definition"]?.({ toolID: "read" }, definition);
+    expect(definition.description).toBe("previous");
   });
 
   test("rejects codemem-style ZodObject args at registration", async () => {

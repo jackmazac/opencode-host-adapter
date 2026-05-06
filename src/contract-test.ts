@@ -188,6 +188,7 @@ export function runPluginContractTests(opts: ContractTestOptions): void {
       }
       const structuredResult = await structuredTool.execute({}, {});
       assertToolFailureResult(structuredResult);
+      expect(structuredResult.output).toBe(structuredResult.message);
       expect(structuredResult.error.message).toBe("contract boom");
 
       const legacy = wrapPlugin(
@@ -241,6 +242,7 @@ export function runPluginContractTests(opts: ContractTestOptions): void {
 
       assertToolFailureResult(result);
       expect(called).toBe(false);
+      expect(result.output).toBe(result.message);
       expect(result.error.name).toBe("ToolArgsValidationError");
       expect(result.error.code).toBe(ERROR_TOOL_ARGS_INVALID);
       expect(result.error.retryable).toBe(false);

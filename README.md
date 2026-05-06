@@ -55,7 +55,7 @@ export default wrapPlugin(ConductorPlugin, { name: "conductor" });
 - **Enforces per-tool timeouts via `AbortSignal`.** Default 2 minutes. The signal is passed on `ctx.signal`. A timeout emits `error.code = "E_TIMEOUT"` and `retryable = true`.
 - **Propagates fleet correlation IDs.** With `propagateFleetContext: true` (default), reads IDs from `ctx.metadata.fleet`, flat snake_case metadata, or `args.metadata`. Missing `correlation_id` is generated; every call also gets a fresh `tool_call_id`. The wrapped `ctx` is shallow-copied — the caller's object is not mutated.
 - **Emits canonical NDJSON telemetry** for every lifecycle event. Argument payloads are never logged; only key/type/size digests are emitted.
-- **Filters bad `experimental.chat.system.transform` output.** `null`, `undefined`, and empty strings are removed from `o.system`.
+- **Repairs simple hook output shapes.** String arrays, string maps, booleans, and display strings are normalized around plugin hooks so malformed host inputs or plugin mutations do not violate OpenCode's public hook contracts. `tool.execute.after` result objects are not rewritten because later hooks and the provider stream consume those exact shapes.
 - **Wraps `tool.execute.after`** so synchronous throws are swallowed to stderr instead of crashing the host.
 
 ## WrapOptions
@@ -76,6 +76,7 @@ export default wrapPlugin(ConductorPlugin, { name: "conductor" });
 
 ```ts
 type ToolFailureResult = {
+  output: string;                            // OpenCode ToolResult-compatible display output
   ok: false;
   schema_version: 1;
   plugin: string;
@@ -94,7 +95,7 @@ type ToolFailureResult = {
 };
 ```
 
-Use `assertToolFailureResult(value)` (exported from root) to narrow an unknown return value at runtime.
+Use `assertToolFailureResult(value)` (exported from root) to narrow an unknown return value at runtime. The `output` field intentionally mirrors `message` so structured failures still satisfy OpenCode's `{ output: string }` tool result contract.
 
 ## Error Taxonomy
 
@@ -195,7 +196,7 @@ Both print actionable error messages and exit non-zero on violation, suitable fo
 ```bash
 bun install
 bun run typecheck
-bun test    # expect 40 tests across 3 files
+bun test    # expect 44 tests across 3 files
 ```
 
 ## License

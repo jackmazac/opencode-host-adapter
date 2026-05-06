@@ -131,6 +131,7 @@ export type WrapOptions = {
 };
 
 export type ToolFailureResult = {
+  output: string;
   ok: false;
   schema_version: 1;
   plugin: string;
@@ -154,6 +155,7 @@ export type ExtractedFleetContext = {
 
 export function assertToolFailureResult(value: unknown): asserts value is ToolFailureResult {
   if (!isRecord(value)) throw new Error("expected ToolFailureResult object");
+  requireStringField(value, "output");
   if (value.ok !== false) throw new Error("ToolFailureResult.ok must be false");
   if (value.schema_version !== 1) throw new Error("ToolFailureResult.schema_version must be 1");
   requireStringField(value, "plugin");

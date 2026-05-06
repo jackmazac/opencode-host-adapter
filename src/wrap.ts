@@ -62,6 +62,7 @@ export function wrapPlugin<I, O>(
     installAfterHookGuard(wrappedHooks, opts);
     if (opts.propagateFleetContext !== false) installFleetHookPropagation(wrappedHooks, opts);
     if (opts.propagateTraceId) installTraceIdPropagation(wrappedHooks, opts);
+    installOutputShapeGuards(wrappedHooks);
 
     emit(opts, {
       kind: "plugin.loaded",
@@ -277,6 +278,7 @@ function failureReturn(
   if (telemetryError.code !== undefined) error.code = telemetryError.code;
   if (telemetryError.retryable !== undefined) error.retryable = telemetryError.retryable;
   return {
+    output: message,
     ok: false,
     schema_version: 1,
     plugin: opts.name,
@@ -328,10 +330,72 @@ function installSystemTransformFilter(wrappedHooks: AnyHooks): void {
   if (!original) return;
   wrappedHooks["experimental.chat.system.transform"] = async (i, o) => {
     await original(i, o);
-    if (Array.isArray(o.system)) {
-      o.system = o.system.filter((entry) => typeof entry === "string" && entry.length > 0);
-    }
+    sanitizeStringArrayField(o, "system");
   };
+}
+
+function installOutputShapeGuards(wrappedHooks: AnyHooks): void {
+  const chatParams = wrappedHooks["chat.params"];
+  if (chatParams) {
+    wrappedHooks["chat.params"] = async (i, o) => {
+      await chatParams(i, o);
+      if (!isRecord(o.options)) o.options = {};
+    };
+  }
+
+  const chatHeaders = wrappedHooks["chat.headers"];
+  if (chatHeaders) {
+    wrappedHooks["chat.headers"] = async (i, o) => {
+      await chatHeaders(i, o);
+      if (isRecord(o)) sanitizeStringRecordField(o, "headers");
+    };
+  }
+
+  const shellEnv = wrappedHooks["shell.env"];
+  if (shellEnv) {
+    wrappedHooks["shell.env"] = async (i, o) => {
+      await shellEnv(i, o);
+      if (isRecord(o)) sanitizeStringRecordField(o, "env");
+    };
+  }
+
+  const compacting = wrappedHooks["experimental.session.compacting"];
+  if (compacting) {
+    wrappedHooks["experimental.session.compacting"] = async (i, o) => {
+      await compacting(i, o);
+      if (isRecord(o)) {
+        sanitizeStringArrayField(o, "context");
+        sanitizeOptionalStringField(o, "prompt");
+      }
+    };
+  }
+
+  const autocontinue = wrappedHooks["experimental.compaction.autocontinue"];
+  if (autocontinue) {
+    wrappedHooks["experimental.compaction.autocontinue"] = async (i, o) => {
+      const previous = isRecord(o) && typeof o.enabled === "boolean" ? o.enabled : true;
+      await autocontinue(i, o);
+      if (isRecord(o)) sanitizeBooleanField(o, "enabled", previous);
+    };
+  }
+
+  const textComplete = wrappedHooks["experimental.text.complete"];
+  if (textComplete) {
+    wrappedHooks["experimental.text.complete"] = async (i, o) => {
+      const previous = isRecord(o) && typeof o.text === "string" ? o.text : "";
+      await textComplete(i, o);
+      if (isRecord(o)) sanitizeStringField(o, "text", previous);
+    };
+  }
+
+  const toolDefinition = wrappedHooks["tool.definition"];
+  if (toolDefinition) {
+    wrappedHooks["tool.definition"] = async (i, o) => {
+      const previous = isRecord(o) && typeof o.description === "string" ? o.description : "";
+      await toolDefinition(i, o);
+      if (isRecord(o)) sanitizeStringField(o, "description", previous);
+    };
+  }
 }
 
 function installAfterHookGuard(wrappedHooks: AnyHooks, opts: WrapOptions): void {
@@ -410,6 +474,7 @@ function installTraceIdPropagation(wrappedHooks: AnyHooks, opts: WrapOptions): v
   const originalChatParams = wrappedHooks["chat.params"];
   wrappedHooks["chat.params"] = async (i, o) => {
     if (originalChatParams) await originalChatParams(i, o);
+    if (!isRecord(o.options)) o.options = {};
     if (!o.options) o.options = {};
     const meta = o.options.metadata;
     if (!isRecord(meta)) {
@@ -503,6 +568,47 @@ function timeoutForTool(toolName: string, opts: WrapOptions): number {
 
 function newTraceId(): string {
   return `trc_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function sanitizeStringField(
+  record: Record<string, unknown>,
+  field: string,
+  fallback: string,
+): void {
+  if (typeof record[field] !== "string") record[field] = fallback;
+}
+
+function sanitizeOptionalStringField(record: Record<string, unknown>, field: string): void {
+  const value = record[field];
+  if (value !== undefined && typeof value !== "string") delete record[field];
+}
+
+function sanitizeBooleanField(
+  record: Record<string, unknown>,
+  field: string,
+  fallback: boolean,
+): void {
+  if (typeof record[field] !== "boolean") record[field] = fallback;
+}
+
+function sanitizeStringArrayField(record: Record<string, unknown>, field: string): void {
+  const value = record[field];
+  record[field] = Array.isArray(value)
+    ? value.filter((entry) => typeof entry === "string" && entry.length > 0)
+    : [];
+}
+
+function sanitizeStringRecordField(record: Record<string, unknown>, field: string): void {
+  const value = record[field];
+  if (!isRecord(value)) {
+    record[field] = {};
+    return;
+  }
+  const clean: Record<string, string> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (typeof entry === "string") clean[key] = entry;
+  }
+  record[field] = clean;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -54,9 +54,15 @@ Wrapped tools validate every runtime `args` object against the tool's declared r
 
 Boundary failures use exported constants from `src/errors.ts`. Use `ERROR_TOOL_ARGS_INVALID` and `ERROR_TIMEOUT` in tests instead of string literals when practical. New Host Adapter error codes must be documented in the README's Error Taxonomy table and covered by either `runPluginContractTests` or focused unit tests.
 
+### Structured failures are OpenCode ToolResults
+
+`ToolFailureResult` must always include `output: string` mirroring `message`. OpenCode's public tool result contract is `string | { output: string; metadata?: ... }`; returning a plain structured object without `output` can crash result rendering (`undefined is not an object (evaluating 'r.split')`). Keep this covered in wrapper and contract tests.
+
 ### Hook boundary policy
 
 Hooks must never receive less information after Host Adapter decoration than OpenCode supplied originally. If a hook injects metadata, merge it with caller-provided input/output values; never replace the entire args object with metadata-only state. Hook wrappers should catch plugin throws, emit `hook.failed`, and avoid crashing OpenCode unless the hook's public contract explicitly requires propagation.
+
+For simple OpenCode output contracts, sanitize after plugin hooks run: string arrays keep only non-empty strings, string maps keep only string values, optional strings are removed when invalid, and required display strings fall back to their previous value. Do not let a plugin mutation leave `system`, `headers`, `env`, `context`, `enabled`, `text`, or `description` in a shape OpenCode cannot consume. Do not mutate shared `tool.execute.after` result objects; downstream plugins and the provider stream consume those exact shapes.
 
 ## Type safety rules
 
@@ -88,7 +94,7 @@ Every plugin calls `wrapPlugin(TheirPlugin, { name: "..." })` and gets validatio
 ```bash
 # In this repo:
 bun run typecheck
-bun test                      # expect 40 tests across 3 files
+bun test                      # expect 44 tests across 3 files
 
 # Downstream smoke (changes here ripple to every plugin):
 cd ~/Developer/opencode-conductor && bun run check
