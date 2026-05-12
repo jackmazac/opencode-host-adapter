@@ -176,7 +176,7 @@ if (!result.ok) {
 }
 ```
 
-`extractFleetContext(ctx)` is also exported for plugins that need to inspect or log the resolved fleet IDs before calling their own logic.
+`extractFleetContext(metadata, args)` is exported for plugins that need to inspect or log the resolved fleet IDs before calling their own logic. `extractFleetContextFromUnknown(...values)` is the boundary helper for tools or hooks that receive a mix of args, context metadata, and event properties and need one decoded `FleetContext` without redefining the shape locally.
 
 ## Migration Policy
 

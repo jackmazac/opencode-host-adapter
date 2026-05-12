@@ -14,6 +14,7 @@ import {
   assertToolFailureResult,
   ERROR_TIMEOUT,
   ERROR_TOOL_ARGS_INVALID,
+  extractFleetContextFromUnknown,
   fleetContracts,
   validateToolDefinitions,
   wrapPlugin,
@@ -152,6 +153,28 @@ describe("validateToolDefinitions", () => {
         "p",
       ).ok,
     ).toBe(false);
+  });
+});
+
+describe("extractFleetContextFromUnknown", () => {
+  test("merges fleet fields from args, context metadata, and event properties", () => {
+    const context = {
+      metadata: {
+        fleet: {
+          correlation_id: "corr_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+          wave_id: "W3",
+        },
+      },
+    };
+    const args = { plan_slug: "fleet-correlation" };
+    const event = { properties: { lifecycle_object_id: "source-file:src/index.ts" } };
+
+    const ctx = extractFleetContextFromUnknown(args, context, event);
+
+    expect(String(ctx.plan_slug)).toBe("fleet-correlation");
+    expect(String(ctx.correlation_id)).toBe("corr_01ARZ3NDEKTSV4RRFFQ69G5FAV");
+    expect(String(ctx.wave_id)).toBe("W3");
+    expect(String(ctx.lifecycle_object_id)).toBe("source-file:src/index.ts");
   });
 });
 

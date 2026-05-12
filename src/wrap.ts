@@ -98,6 +98,15 @@ export function extractFleetContext(
   return { context: emptyFleetContext(), source: "generated" };
 }
 
+export function extractFleetContextFromUnknown(...values: unknown[]): FleetContext {
+  const raw: Record<string, unknown> = {};
+  for (const value of values) collectFleetContextFields(raw, value);
+  const decoded = decodeFleetContext(raw);
+  if (!decoded.ok) return emptyFleetContext();
+  if (!hasFleetContextValue(decoded.value)) return emptyFleetContext();
+  return decoded.value;
+}
+
 function validateHooks(hooks: unknown, opts: WrapOptions): AnyHooks {
   if (!isRecord(hooks)) {
     fail(opts, `[host:${opts.name}] plugin returned non-object hooks: ${typeof hooks}`);
@@ -544,6 +553,49 @@ function readFleetCandidate(value: unknown): unknown {
 function readMetadataCandidate(value: unknown): unknown {
   if (!isRecord(value)) return undefined;
   return value.metadata;
+}
+
+function collectFleetContextFields(target: Record<string, unknown>, value: unknown): void {
+  if (!isRecord(value)) return;
+  copyFleetContextFields(target, value);
+  const metadata = readMetadataCandidate(value);
+  if (isRecord(metadata)) copyFleetContextFields(target, metadata);
+  const fleet = readFleetCandidate(value) ?? readFleetCandidate(metadata);
+  if (isRecord(fleet)) copyFleetContextFields(target, fleet);
+  const properties = value.properties;
+  if (isRecord(properties)) collectFleetContextFields(target, properties);
+}
+
+function copyFleetContextFields(target: Record<string, unknown>, source: Record<string, unknown>): void {
+  for (const key of [
+    "workspace_id",
+    "workspaceId",
+    "plan_id",
+    "planId",
+    "plan_slug",
+    "planSlug",
+    "wave_id",
+    "waveId",
+    "agent_run_id",
+    "agentRunId",
+    "correlation_id",
+    "correlationId",
+    "tool_call_id",
+    "toolCallId",
+    "spine_seq",
+    "spineSeq",
+    "artifact_ref",
+    "artifactRef",
+    "lifecycle_object_id",
+    "lifecycleObjectId",
+    "concord_event_id",
+    "concordEventId",
+    "fleet_run_id",
+    "fleetRunId",
+  ]) {
+    const value = source[key];
+    if (value !== undefined) target[key] = value;
+  }
 }
 
 function readOpenCodePassthrough(context: unknown): OpenCodePassthrough | undefined {
