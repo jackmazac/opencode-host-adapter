@@ -50,6 +50,10 @@ Wave 1 hotfix `eb3f323` fixed a bug where input tool args (`patchText`, `filePat
 
 Wrapped tools validate every runtime `args` object against the tool's declared raw-shape schemas before `execute` runs. Invalid payloads return `ToolFailureResult` with `error.code = "E_TOOL_ARGS_INVALID"`. Do not add an opt-out; this boundary prevents handler-level crashes such as `undefined is not an object`, `r.split`, path helpers receiving `undefined`, or file writes receiving missing content.
 
+### Timeouts are cooperative cancellation
+
+Host Adapter aborts `ctx.signal` and returns a structured `E_TIMEOUT` failure when a wrapped tool exceeds its timeout. It cannot kill arbitrary in-process plugin work. Tool handlers that ignore `ctx.signal` may continue running until their own promise settles, so plugins must observe the signal before long loops, daemon waits, file walks, or large archive streams.
+
 ### Error taxonomy is stable
 
 Boundary failures use exported constants from `src/errors.ts`. Use `ERROR_TOOL_ARGS_INVALID` and `ERROR_TIMEOUT` in tests instead of string literals when practical. New Host Adapter error codes must be documented in the README's Error Taxonomy table and covered by either `runPluginContractTests` or focused unit tests.
@@ -94,7 +98,7 @@ Every plugin calls `wrapPlugin(TheirPlugin, { name: "..." })` and gets validatio
 ```bash
 # In this repo:
 bun run typecheck
-bun test                      # expect 44 tests across 3 files
+bun test
 
 # Downstream smoke (changes here ripple to every plugin):
 cd ~/Developer/opencode-conductor && bun run check

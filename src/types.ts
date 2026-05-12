@@ -145,6 +145,10 @@ export type ToolFailureResult = {
   agent_run_id: string | null;
   correlation_id: string | null;
   tool_call_id: string | null;
+  spine_seq: number | null;
+  artifact_ref: string | null;
+  lifecycle_object_id: string | null;
+  concord_event_id: string | null;
   fleet_run_id: string | null;
 };
 
@@ -173,6 +177,10 @@ export function assertToolFailureResult(value: unknown): asserts value is ToolFa
   requireNullableStringField(value, "agent_run_id");
   requireNullableStringField(value, "correlation_id");
   requireNullableStringField(value, "tool_call_id");
+  requireNullableNumberField(value, "spine_seq");
+  requireNullableStringField(value, "artifact_ref");
+  requireNullableStringField(value, "lifecycle_object_id");
+  requireNullableStringField(value, "concord_event_id");
   requireNullableStringField(value, "fleet_run_id");
 }
 
@@ -184,6 +192,13 @@ function requireNullableStringField(record: Record<string, unknown>, field: stri
   const value = record[field];
   if (value !== null && typeof value !== "string") {
     throw new Error(`${field} must be a string or null`);
+  }
+}
+
+function requireNullableNumberField(record: Record<string, unknown>, field: string): void {
+  const value = record[field];
+  if (value !== null && typeof value !== "number") {
+    throw new Error(`${field} must be a number or null`);
   }
 }
 

@@ -301,6 +301,10 @@ function failureReturn(
     agent_run_id: context.agent_run_id,
     correlation_id: context.correlation_id,
     tool_call_id: context.tool_call_id,
+    spine_seq: context.spine_seq,
+    artifact_ref: context.artifact_ref,
+    lifecycle_object_id: context.lifecycle_object_id,
+    concord_event_id: context.concord_event_id,
     fleet_run_id: context.fleet_run_id,
   };
 }

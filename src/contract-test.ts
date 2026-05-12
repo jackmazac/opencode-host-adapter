@@ -20,6 +20,7 @@
  *     pluginPath: import.meta.resolveSync("../src/index.ts"),
  *     pluginName: "my-plugin",
  *     stubInput: () => ({ ... }),
+ *     malformedArgCases: [{ tool: "my_tool", args: {} }],
  *   });
  */
 
@@ -67,6 +68,13 @@ export type ContractTestOptions = {
    * tool names (rejects extras and missing). Stricter than expectedTools.
    */
   exactTools?: string[];
+
+  /**
+   * Optional malformed runtime calls against the plugin's real exported tool
+   * definitions. Use this to prove the plugin entry is wrapped by Host Adapter
+   * and returns E_TOOL_ARGS_INVALID instead of allowing handler-level crashes.
+   */
+  malformedArgCases?: Array<{ tool: string; args: unknown; context?: unknown }>;
 };
 
 export function runPluginContractTests(opts: ContractTestOptions): void {
@@ -132,6 +140,25 @@ export function runPluginContractTests(opts: ContractTestOptions): void {
       });
     }
 
+    if (opts.malformedArgCases && opts.malformedArgCases.length > 0) {
+      const cases = opts.malformedArgCases;
+      test("wrapped real tools reject configured malformed runtime args", async () => {
+        const tools = await loadTools(opts);
+        for (const c of cases) {
+          const tool = tools[c.tool];
+          if (!isRecord(tool) || typeof tool.execute !== "function") {
+            throw new Error(`${c.tool} tool not registered`);
+          }
+          const result = await tool.execute(c.args, c.context ?? {});
+          assertToolFailureResult(result);
+          expect(result.output).toBe(result.message);
+          expect(result.error.name).toBe("ToolArgsValidationError");
+          expect(result.error.code).toBe(ERROR_TOOL_ARGS_INVALID);
+          expect(result.error.retryable).toBe(false);
+        }
+      });
+    }
+
     test("wrapped mock tool emits canonical fleet telemetry", async () => {
       const telemetryPath = tempTelemetryPath();
       const correlationId = newCorrelationId();
@@ -190,6 +217,27 @@ export function runPluginContractTests(opts: ContractTestOptions): void {
       assertToolFailureResult(structuredResult);
       expect(structuredResult.output).toBe(structuredResult.message);
       expect(structuredResult.error.message).toBe("contract boom");
+      expect(Object.keys(structuredResult).sort()).toEqual([
+        "agent_run_id",
+        "artifact_ref",
+        "concord_event_id",
+        "correlation_id",
+        "error",
+        "fleet_run_id",
+        "lifecycle_object_id",
+        "message",
+        "ok",
+        "output",
+        "plan_id",
+        "plan_slug",
+        "plugin",
+        "schema_version",
+        "spine_seq",
+        "tool",
+        "tool_call_id",
+        "wave_id",
+        "workspace_id",
+      ]);
 
       const legacy = wrapPlugin(
         async () => ({

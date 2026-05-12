@@ -14,6 +14,7 @@ import {
   assertToolFailureResult,
   ERROR_TIMEOUT,
   ERROR_TOOL_ARGS_INVALID,
+  argDigest,
   extractFleetContextFromUnknown,
   fleetContracts,
   validateToolDefinitions,
@@ -196,6 +197,20 @@ describe("wrapPlugin", () => {
     expect(content).toContain('"toolCount":1');
   });
 
+  test("argDigest is bounded and non-throwing for large or circular args", () => {
+    const circular: Record<string, unknown> = { token: "secret", patchText: "x".repeat(50_000) };
+    circular.self = circular;
+    const digest = argDigest(circular);
+    expect(digest.keys).toContain("token");
+    expect(digest.keys).toContain("patchText");
+    expect(digest.types.self).toBe("object");
+    expect(digest.size).toBe(-1);
+
+    const manyKeys: Record<string, unknown> = {};
+    for (let i = 0; i < 100; i += 1) manyKeys[`k${i}`] = i;
+    expect(argDigest(manyKeys).keys.length).toBe(32);
+  });
+
   test("emits plugin.failed when plugin throws", async () => {
     const path = trackTemp(tempTelemetry());
     const wrapped = wrapPlugin(
@@ -210,6 +225,29 @@ describe("wrapPlugin", () => {
 
   test("wraps tool execute so thrown errors return structured failures by default", async () => {
     const path = trackTemp(tempTelemetry());
+    const lifecycle = fleetContracts.parseLifecycleObjectId("source-file:src/index.ts");
+    const concord = fleetContracts.parseConcordEventId("concord:42");
+    if (!lifecycle.ok) throw new Error(lifecycle.reason);
+    if (!concord.ok) throw new Error(concord.reason);
+    const hash = "a".repeat(64);
+    const artifact = fleetContracts.buildArtifactRef({
+      kind: "fleet_report",
+      path: "reports/fleet.json",
+      hash,
+    }).ref;
+    const fleet = {
+      workspace_id: fleetContracts.newWorkspaceId("/tmp/crashy"),
+      plan_id: fleetContracts.newPlanId(),
+      plan_slug: "fleet-correlation",
+      wave_id: "W1",
+      agent_run_id: fleetContracts.newAgentRunId(),
+      correlation_id: fleetContracts.newCorrelationId(),
+      spine_seq: 7,
+      artifact_ref: artifact,
+      lifecycle_object_id: lifecycle.value,
+      concord_event_id: concord.value,
+      fleet_run_id: fleetContracts.newFleetRunId(),
+    };
     const wrapped = wrapPlugin(
       async () => ({
         tool: {
@@ -227,7 +265,7 @@ describe("wrapPlugin", () => {
     const hooks = await wrapped(stubInput);
     const crashRaw = hooks.tool?.crash;
     const execute = getExecute(crashRaw, "crash");
-    const result = await execute({ msg: "hi" }, {});
+    const result = await execute({ msg: "hi" }, { metadata: { fleet } });
     assertToolFailureResult(result);
     expect(result.plugin).toBe("crashy");
     expect(result.tool).toBe("crash");
@@ -235,6 +273,20 @@ describe("wrapPlugin", () => {
     expect(result.output).toBe(result.message);
     expect(result.error.message).toBe("inside");
     expect(result.schema_version).toBe(1);
+    expect(result.workspace_id).toBe(fleet.workspace_id);
+    expect(result.plan_id).toBe(fleet.plan_id);
+    expect(result.plan_slug).toBe(fleet.plan_slug);
+    expect(result.wave_id).toBe(fleet.wave_id);
+    expect(result.agent_run_id).toBe(fleet.agent_run_id);
+    expect(result.correlation_id).toBe(fleet.correlation_id);
+    expect(result.tool_call_id).not.toBeNull();
+    if (result.tool_call_id === null) throw new Error("tool_call_id missing");
+    expect(result.tool_call_id).toMatch(/^tool_/);
+    expect(result.spine_seq).toBe(fleet.spine_seq);
+    expect(result.artifact_ref).toBe(fleet.artifact_ref);
+    expect(result.lifecycle_object_id).toBe(fleet.lifecycle_object_id);
+    expect(result.concord_event_id).toBe(fleet.concord_event_id);
+    expect(result.fleet_run_id).toBe(fleet.fleet_run_id);
     expect(readFileSync(path, "utf8")).toContain('"tool.failed"');
   });
 
@@ -658,6 +710,36 @@ describe("wrapPlugin", () => {
     const execute = getExecute(slowRaw, "slow");
     await execute({}, {});
     expect(aborted).toBe(true);
+  });
+
+  test("non-cooperative tools may continue after timeout if they ignore AbortSignal", async () => {
+    let settledLate = false;
+    const path = trackTemp(tempTelemetry());
+    const wrapped = wrapPlugin(
+      async () => ({
+        tool: {
+          ignores_signal: {
+            description: "ignores signal",
+            args: {},
+            execute: async () => {
+              await sleep(60);
+              settledLate = true;
+              return "late";
+            },
+          },
+        },
+      }),
+      { name: "noncooperative", telemetryPath: path, defaultTimeoutMs: 10 },
+    );
+    const hooks = await wrapped(stubInput);
+    const raw = hooks.tool?.ignores_signal;
+    const execute = getExecute(raw, "ignores_signal");
+    const result = await execute({}, {});
+    assertToolFailureResult(result);
+    expect(result.error.code).toBe(ERROR_TIMEOUT);
+    expect(settledLate).toBe(false);
+    await sleep(80);
+    expect(settledLate).toBe(true);
   });
 
   test("tool execute receives injected context.metadata.fleet without mutating caller context", async () => {

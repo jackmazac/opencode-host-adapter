@@ -11,12 +11,12 @@
  *   - each arg value is a zod schema (has _zod or _def)
  */
 
-import type { ToolDefinitionResolved, ToolLike, ToolValidationResult, WrapOptions } from "./types.ts";
+import type { ToolDefinitionResolved, ToolValidationResult, WrapOptions } from "./types.ts";
 
 export function looksLikeZodSchema(value: unknown): boolean {
   if (!value || typeof value !== "object") return false;
-  const v = value as Record<string, unknown>;
-  return Boolean(v._zod) || Boolean(v._def);
+  if (!isRecord(value)) return false;
+  return Boolean(value._zod) || Boolean(value._def);
 }
 
 export function validateToolDefinition(
@@ -24,43 +24,45 @@ export function validateToolDefinition(
   def: unknown,
   opts: { name: string },
 ): { ok: true; resolved: ToolDefinitionResolved } | { ok: false; error: string } {
-  const t = def as ToolLike;
-  if (!t || typeof t !== "object") {
+  if (!isRecord(def)) {
     return {
       ok: false,
-      error: `[host:${opts.name}] tool "${toolName}" is not an object: ${typeof t}`,
+      error: `[host:${opts.name}] tool "${toolName}" is not an object: ${typeof def}`,
     };
   }
 
-  if (typeof t.description !== "string" || t.description.length === 0) {
+  const description = def.description;
+  if (typeof description !== "string" || description.length === 0) {
     return {
       ok: false,
       error: `[host:${opts.name}] tool "${toolName}" missing/empty description`,
     };
   }
 
-  if (typeof t.execute !== "function") {
+  const execute = def.execute;
+  if (!isExecute(execute)) {
     return {
       ok: false,
       error: `[host:${opts.name}] tool "${toolName}" execute is not a function`,
     };
   }
 
-  if (t.args === undefined || t.args === null) {
+  const args = def.args;
+  if (args === undefined || args === null) {
     return {
       ok: false,
       error: `[host:${opts.name}] tool "${toolName}" missing args (must be a Record<string, ZodSchema> object literal)`,
     };
   }
 
-  if (typeof t.args !== "object") {
+  if (!isRecord(args)) {
     return {
       ok: false,
-      error: `[host:${opts.name}] tool "${toolName}" args is not an object: ${typeof t.args}`,
+      error: `[host:${opts.name}] tool "${toolName}" args is not an object: ${typeof args}`,
     };
   }
 
-  if (looksLikeZodSchema(t.args)) {
+  if (looksLikeZodSchema(args)) {
     return {
       ok: false,
       error:
@@ -72,7 +74,7 @@ export function validateToolDefinition(
     };
   }
 
-  for (const [argName, argSchema] of Object.entries(t.args as Record<string, unknown>)) {
+  for (const [argName, argSchema] of Object.entries(args)) {
     if (!looksLikeZodSchema(argSchema)) {
       return {
         ok: false,
@@ -83,7 +85,7 @@ export function validateToolDefinition(
 
   return {
     ok: true,
-    resolved: t as ToolDefinitionResolved,
+    resolved: { description, args, execute },
   };
 }
 
@@ -97,16 +99,24 @@ export function validateToolDefinitions(
   pluginName: string,
 ): ToolValidationResult {
   if (!tools) return { ok: true };
-  if (typeof tools !== "object") {
+  if (!isRecord(tools)) {
     return { ok: false, errors: [`[${pluginName}] hooks.tool is not an object`] };
   }
 
   const errors: string[] = [];
-  for (const [name, def] of Object.entries(tools as Record<string, unknown>)) {
+  for (const [name, def] of Object.entries(tools)) {
     const result = validateToolDefinition(name, def, { name: pluginName });
     if (!result.ok) errors.push(result.error);
   }
   return errors.length === 0 ? { ok: true } : { ok: false, errors };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function isExecute(value: unknown): value is (...args: unknown[]) => unknown {
+  return typeof value === "function";
 }
 
 export function fail(opts: Pick<WrapOptions, "strict" | "name">, message: string): void {

@@ -52,7 +52,7 @@ export default wrapPlugin(ConductorPlugin, { name: "conductor" });
 - **Validates tool definitions at load.** Asserts `args` is a plain object literal (not a `ZodObject`), `description` is a non-empty string, and `execute` is a function. Catches `args: z.object({...})` at registration with a clear error before OpenCode introspects the malformed tool.
 - **Validates runtime tool args.** Each call is checked against the declared `args` schemas before `execute` runs. Invalid payloads return `ToolFailureResult` with `error.code = "E_TOOL_ARGS_INVALID"`.
 - **Catches `execute` throws and returns `ToolFailureResult`.** A thrown error returns a structured object (`ok: false`, plugin name, tool name, error detail, all correlation IDs) instead of propagating into OpenCode's Effect pipeline. Set `legacyErrorString: true` to restore the old display string while a consumer migrates.
-- **Enforces per-tool timeouts via `AbortSignal`.** Default 2 minutes. The signal is passed on `ctx.signal`. A timeout emits `error.code = "E_TIMEOUT"` and `retryable = true`.
+- **Enforces per-tool timeouts via `AbortSignal`.** Default 2 minutes. The signal is passed on `ctx.signal`. A timeout returns `error.code = "E_TIMEOUT"` and `retryable = true`. Cancellation is cooperative: Host Adapter aborts the signal and returns a structured timeout, but a plugin that ignores `ctx.signal` may keep doing background work until its own promise settles.
 - **Propagates fleet correlation IDs.** With `propagateFleetContext: true` (default), reads IDs from `ctx.metadata.fleet`, flat snake_case metadata, or `args.metadata`. Missing `correlation_id` is generated; every call also gets a fresh `tool_call_id`. The wrapped `ctx` is shallow-copied — the caller's object is not mutated.
 - **Emits canonical NDJSON telemetry** for every lifecycle event. Argument payloads are never logged; only key/type/size digests are emitted.
 - **Repairs simple hook output shapes.** String arrays, string maps, booleans, and display strings are normalized around plugin hooks so malformed host inputs or plugin mutations do not violate OpenCode's public hook contracts. `tool.execute.after` result objects are not rewritten because later hooks and the provider stream consume those exact shapes.
@@ -91,6 +91,10 @@ type ToolFailureResult = {
   agent_run_id: string | null;
   correlation_id: string | null;
   tool_call_id: string | null;
+  spine_seq: number | null;
+  artifact_ref: string | null;
+  lifecycle_object_id: string | null;
+  concord_event_id: string | null;
   fleet_run_id: string | null;
 };
 ```
@@ -112,7 +116,7 @@ The root export includes `ERROR_TOOL_ARGS_INVALID`, `ERROR_TIMEOUT`, `ToolArgsVa
 
 Every wrapped lifecycle event emits a canonical `FleetTelemetryEnvelope` line to NDJSON at `~/.local/share/opencode/log/plugin-lifecycle.jsonl`. Override with `WrapOptions.telemetryPath` or `OPENCODE_HOST_ADAPTER_TELEMETRY`.
 
-Envelope fields: `schema_version` (1), `ts` (ISO 8601), `kind` (`plugin.loaded | plugin.failed | plugin.validation_failed | tool.executed | tool.failed | hook.failed | trace.propagated`), `plugin`, `tool`, `durationMs`, `status` (`ok | error | timeout`), `error` (structured), and all 12 correlation IDs (`workspace_id`, `plan_id`, `plan_slug`, `wave_id`, `agent_run_id`, `correlation_id`, `tool_call_id`, `spine_seq`, `artifact_ref`, `lifecycle_object_id`, `concord_event_id`, `fleet_run_id`) — all nullable.
+Envelope fields: `schema_version` (1), `ts` (ISO 8601), `kind` (`plugin.loaded | plugin.failed | plugin.validation_failed | tool.executed | tool.failed | hook.failed | trace.propagated`), `plugin`, `tool`, `durationMs`, `status` (`ok | error`), `error` (structured), and all 12 correlation IDs (`workspace_id`, `plan_id`, `plan_slug`, `wave_id`, `agent_run_id`, `correlation_id`, `tool_call_id`, `spine_seq`, `artifact_ref`, `lifecycle_object_id`, `concord_event_id`, `fleet_run_id`) — all nullable.
 
 **Privacy**: argument payloads are never logged; `argDigest` emits only key names, type tags, and byte sizes. Telemetry never throws — every emit path swallows errors to stderr.
 
@@ -156,6 +160,7 @@ runPluginContractTests({
     $: (() => {}) as never,
   }),
   expectedTools: ["my_tool"],
+  malformedArgCases: [{ tool: "my_tool", args: {} }],
   // exactTools: ["my_tool"],  // assert no extra tools exist
 });
 ```
@@ -196,7 +201,7 @@ Both print actionable error messages and exit non-zero on violation, suitable fo
 ```bash
 bun install
 bun run typecheck
-bun test    # expect 44 tests across 3 files
+bun test
 ```
 
 ## License
