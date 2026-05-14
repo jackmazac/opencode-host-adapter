@@ -113,7 +113,7 @@ export type WrapOptions = {
 
   /**
    * Global timeout, in milliseconds, for each wrapped tool execution.
-   * Default 120_000.
+   * Default 240_000.
    */
   defaultTimeoutMs?: number;
 

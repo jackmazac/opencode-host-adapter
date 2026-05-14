@@ -33,7 +33,7 @@ type ExecutionOutcome =
   | { kind: "timeout"; error: { name: string; message: string; code: string; retryable: boolean } };
 
 const TRACE_KEY = "trace_id";
-const DEFAULT_TIMEOUT_MS = 120_000;
+const DEFAULT_TIMEOUT_MS = 240_000;
 
 export function wrapPlugin<I, O>(
   plugin: (input: I, options?: O) => Promise<unknown>,
