@@ -12,7 +12,7 @@ import {
   newWorkspaceId,
   type FleetContext,
   type ToolCallId,
-} from "@jackmazac/opencode-fleet-contracts";
+} from "@mazac-fox/opencode-fleet-contracts";
 import { ERROR_TIMEOUT } from "./errors.ts";
 import { argDigest, emit, errorPayload } from "./telemetry.ts";
 import { validateToolArgs } from "./tool-args.ts";

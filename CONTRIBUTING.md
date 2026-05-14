@@ -1,4 +1,4 @@
-# Contributing to @jackmazac/opencode-host-adapter
+# Contributing to @mazac-fox/opencode-host-adapter
 
 This package is the defensive substrate for every other opencode plugin in this ecosystem. Changes here ripple to every consumer; treat them with the corresponding care.
 

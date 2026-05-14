@@ -1,4 +1,4 @@
-# @jackmazac/opencode-host-adapter — agent guide
+# @mazac-fox/opencode-host-adapter — agent guide
 
 ## Scope
 
@@ -8,7 +8,7 @@ Host Adapter is the most cross-cutting package in the fleet. Every plugin (`cond
 
 ## Canonical contracts
 
-IDs, telemetry envelope, artifact references, and health reports live in `@jackmazac/opencode-fleet-contracts`. Host Adapter re-exports them. Do **not** redefine contract shapes here — import them from the contracts package. Duplicating a shape creates silent drift when the canonical definition changes.
+IDs, telemetry envelope, artifact references, and health reports live in `@mazac-fox/opencode-fleet-contracts`. Host Adapter re-exports them. Do **not** redefine contract shapes here — import them from the contracts package. Duplicating a shape creates silent drift when the canonical definition changes.
 
 ## What agents do here
 
@@ -81,7 +81,7 @@ OpenCode runtime
        │
        ▼
 ┌─────────────────────────────────────────────┐
-│        @jackmazac/opencode-host-adapter      │
+│        @mazac-fox/opencode-host-adapter      │
 │  validate → wrap → timeout → telemetry       │
 │  ← re-exports fleet-contracts               │
 └───────────────┬─────────────────────────────┘
@@ -120,7 +120,7 @@ Changes here affect every plugin. Before shipping:
 1. Expand `runPluginContractTests` or add targeted tests to cover the new behavior.
 2. Run the downstream smoke commands above for at least Conductor and Engram.
 3. Update the README's `WrapOptions` table, `ToolFailureResult` section, or Telemetry section as appropriate.
-4. Bump `schema_version` in `@jackmazac/opencode-fleet-contracts` ONLY if the `FleetTelemetryEnvelope` shape is breaking — additive fields do not require a bump.
+4. Bump `schema_version` in `@mazac-fox/opencode-fleet-contracts` ONLY if the `FleetTelemetryEnvelope` shape is breaking — additive fields do not require a bump.
 5. After publishing, downstream plugins should bump their dep ranges.
 
 ## Migration policy

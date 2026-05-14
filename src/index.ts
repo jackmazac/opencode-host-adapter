@@ -1,11 +1,11 @@
 /**
- * @jackmazac/opencode-host-adapter
+ * @mazac-fox/opencode-host-adapter
  *
  * Defensive wrapper for OpenCode plugins. See the README for usage.
  *
  * Quick start:
  *
- *   import { wrapPlugin } from "@jackmazac/opencode-host-adapter";
+ *   import { wrapPlugin } from "@mazac-fox/opencode-host-adapter";
  *   import type { Plugin } from "@opencode-ai/plugin";
  *
  *   const MyPlugin: Plugin = async (input) => {
@@ -50,4 +50,4 @@ export type {
 // Fleet contracts re-export — see ./contracts for the subpath export.
 // Root namespace export avoids naming conflicts with Host Adapter's own
 // types (e.g. ToolValidationResult, WrapOptions) by using a namespace.
-export * as fleetContracts from "@jackmazac/opencode-fleet-contracts";
+export * as fleetContracts from "@mazac-fox/opencode-fleet-contracts";

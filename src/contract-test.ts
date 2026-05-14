@@ -14,7 +14,7 @@
  * Usage in a plugin's `test/contract.test.ts`:
  *
  *   import { describe } from "bun:test";
- *   import { runPluginContractTests } from "@jackmazac/opencode-host-adapter/contract-test";
+ *   import { runPluginContractTests } from "@mazac-fox/opencode-host-adapter/contract-test";
  *
  *   runPluginContractTests({
  *     pluginPath: import.meta.resolveSync("../src/index.ts"),
@@ -33,7 +33,7 @@ import {
   newCorrelationId,
   parseToolCallId,
   validateTelemetryEnvelope,
-} from "@jackmazac/opencode-fleet-contracts";
+} from "@mazac-fox/opencode-fleet-contracts";
 import { ERROR_TOOL_ARGS_INVALID } from "./errors.ts";
 import { wrapPlugin } from "./wrap.ts";
 import { assertToolFailureResult } from "./types.ts";

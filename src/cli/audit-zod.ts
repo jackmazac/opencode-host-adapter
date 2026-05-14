@@ -8,9 +8,9 @@
  * not. The defensive default is single-instance.
  *
  * Usage:
- *   bun run @jackmazac/opencode-host-adapter/cli/audit-zod
- *   bun run @jackmazac/opencode-host-adapter/cli/audit-zod ./node_modules
- *   bun run @jackmazac/opencode-host-adapter/cli/audit-zod --json
+ *   bun run @mazac-fox/opencode-host-adapter/cli/audit-zod
+ *   bun run @mazac-fox/opencode-host-adapter/cli/audit-zod ./node_modules
+ *   bun run @mazac-fox/opencode-host-adapter/cli/audit-zod --json
  *
  * Exit codes:
  *   0  exactly one zod version resolved
@@ -69,7 +69,7 @@ function findZodInstalls(dir: string): ZodInstall[] {
         visit(full, depth + 1);
       } else if (entry.startsWith("@")) {
         visit(full, depth + 1);
-      } else if (depth === 0 || entry === "@opencode-ai" || entry === "@codemem" || entry === "@jackmazac") {
+      } else if (depth === 0 || entry === "@opencode-ai" || entry === "@codemem" || entry === "@mazac-fox") {
         // Walk into known-deep nesting paths.
         const inner = join(full, "node_modules");
         if (existsSync(inner)) visit(inner, depth + 1);

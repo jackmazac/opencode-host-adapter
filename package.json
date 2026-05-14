@@ -1,6 +1,6 @@
 {
   "$schema": "https://json.schemastore.org/package.json",
-  "name": "@jackmazac/opencode-host-adapter",
+  "name": "@mazac-fox/opencode-host-adapter",
   "version": "0.1.0",
   "description": "Defensive wrapper for OpenCode plugins. Validates tool definitions, wraps execute in try/catch, filters bad system-transform output, and emits structured telemetry. Catches the codemem-style 'undefined is not an object (evaluating n._zod.def)' bug at registration with a clear actionable error.",
   "type": "module",
@@ -33,8 +33,14 @@
     "README.md",
     "LICENSE"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "overrides": {
+    "@mazac-fox/opencode-fleet-contracts": "file:../opencode-fleet-contracts"
+  },
   "dependencies": {
-    "@jackmazac/opencode-fleet-contracts": "file:../opencode-fleet-contracts"
+    "@mazac-fox/opencode-fleet-contracts": "^0.1.0"
   },
   "peerDependencies": {
     "@opencode-ai/plugin": ">=1.14.0"
@@ -46,6 +52,8 @@
     "@typescript/native-preview": "latest"
   },
   "scripts": {
+    "prepack": "node ./scripts/npm-prepack-strip-overrides.mjs",
+    "postpack": "node ./scripts/npm-postpack-restore-package-json.mjs",
     "typecheck": "tsgo --noEmit",
     "test": "bun test"
   }

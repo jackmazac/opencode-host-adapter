@@ -15,7 +15,7 @@
  * requiring them to share a single physical install.
  */
 
-import type { FleetContext } from "@jackmazac/opencode-fleet-contracts";
+import type { FleetContext } from "@mazac-fox/opencode-fleet-contracts";
 
 /**
  * A minimum Plugin-shaped function. Consumers pass their own typed

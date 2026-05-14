@@ -21,8 +21,8 @@
  * zod directly — those schemas never cross the opencode tool boundary.
  *
  * Usage:
- *   bun run @jackmazac/opencode-host-adapter/cli/check-no-zod-import [path...]
- *   bun run @jackmazac/opencode-host-adapter/cli/check-no-zod-import src/index.ts
+ *   bun run @mazac-fox/opencode-host-adapter/cli/check-no-zod-import [path...]
+ *   bun run @mazac-fox/opencode-host-adapter/cli/check-no-zod-import src/index.ts
  *
  * Default path: src/index.ts (the conventional plugin entry).
  *

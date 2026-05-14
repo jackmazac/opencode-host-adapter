@@ -15,7 +15,7 @@ import { dirname, join } from "node:path";
 import {
   validateTelemetryEnvelope,
   type FleetTelemetryEnvelope,
-} from "@jackmazac/opencode-fleet-contracts";
+} from "@mazac-fox/opencode-fleet-contracts";
 import type { WrapOptions } from "./types.ts";
 
 const DEFAULT_PATH = join(
