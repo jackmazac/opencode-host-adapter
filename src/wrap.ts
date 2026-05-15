@@ -161,11 +161,6 @@ function wrapToolExecute(
     const fleet = prepareToolFleetContext(context, args, toolCallId);
     const timeoutMs = timeoutForTool(toolName, opts);
     const controller = new AbortController();
-    const executeContext = withExecutionContext(
-      context,
-      controller.signal,
-      opts.propagateFleetContext === false ? undefined : fleet.context,
-    );
 
     const validatedArgs = validateToolArgs(toolName, def.args, args);
     if (!validatedArgs.ok) {
@@ -184,13 +179,23 @@ function wrapToolExecute(
       return failureReturn(opts, toolName, telemetryError, fleet.context);
     }
 
-    const outcome = await runWithTimeout(
-      originalExecute,
-      validatedArgs.value,
-      executeContext,
-      timeoutMs,
-      controller,
+    const executeContext = withExecutionContext(
+      context,
+      controller.signal,
+      opts.propagateFleetContext === false ? undefined : fleet.context,
     );
+    let outcome: ExecutionOutcome;
+    try {
+      outcome = await runWithTimeout(
+        originalExecute,
+        validatedArgs.value,
+        executeContext.value,
+        timeoutMs,
+        controller,
+      );
+    } finally {
+      executeContext.cleanup();
+    }
     if (outcome.kind === "error" || outcome.kind === "timeout") {
       const telemetryError =
         outcome.kind === "timeout" ? outcome.error : errorPayload(outcome.error);
@@ -513,13 +518,94 @@ function withExecutionContext(
   context: unknown,
   signal: AbortSignal,
   fleet: FleetContext | undefined,
-): unknown {
+): WrappedExecutionContext {
+  const composed = composeAbortSignal(signal, context);
+  const abort = composed.signal;
+  let value: unknown;
   if (!isRecord(context)) {
-    if (fleet) return { metadata: { fleet: fleetContextToJson(fleet) }, signal };
-    return { signal };
+    value = fleet
+      ? { metadata: { fleet: fleetContextToJson(fleet) }, abort, signal: abort }
+      : { abort, signal: abort };
+    return { value, cleanup: composed.cleanup };
   }
-  if (!fleet) return { ...context, signal };
-  return { ...context, metadata: mergeMetadataFleet(context.metadata, fleet), signal };
+  if (!fleet) return { value: { ...context, abort, signal: abort }, cleanup: composed.cleanup };
+  value = {
+    ...context,
+    abort,
+    signal: abort,
+    metadata: mergeExecutionMetadata(context.metadata, fleet),
+  };
+  return { value, cleanup: composed.cleanup };
+}
+
+type WrappedExecutionContext = { value: unknown; cleanup: () => void };
+
+type ComposedAbortSignal = { signal: AbortSignal; cleanup: () => void };
+
+function composeAbortSignal(signal: AbortSignal, context: unknown): ComposedAbortSignal {
+  const signals = [signal];
+  if (isRecord(context)) {
+    if (context.abort instanceof AbortSignal) signals.push(context.abort);
+    if (context.signal instanceof AbortSignal) signals.push(context.signal);
+  }
+
+  if (signals.length === 1) return { signal, cleanup: () => {} };
+
+  const controller = new AbortController();
+  const listeners: Array<{ source: AbortSignal; listener: () => void }> = [];
+  const abortFrom = (source: AbortSignal): void => {
+    if (!controller.signal.aborted) controller.abort(source.reason);
+  };
+
+  for (const source of signals) {
+    if (source.aborted) {
+      abortFrom(source);
+      continue;
+    }
+    const listener = () => abortFrom(source);
+    listeners.push({ source, listener });
+    source.addEventListener("abort", listener, { once: true });
+  }
+
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      for (const entry of listeners) entry.source.removeEventListener("abort", entry.listener);
+    },
+  };
+}
+
+type MetadataReporter = (input: unknown) => unknown;
+
+function mergeExecutionMetadata(metadata: unknown, fleet: FleetContext): unknown {
+  if (isMetadataReporter(metadata)) return wrapMetadataReporter(metadata, fleet);
+  return mergeMetadataFleet(metadata, fleet);
+}
+
+function isMetadataReporter(value: unknown): value is MetadataReporter {
+  return typeof value === "function";
+}
+
+function wrapMetadataReporter(reporter: MetadataReporter, fleet: FleetContext): MetadataReporter {
+  const fleetJson = fleetContextToJson(fleet);
+  const wrapped: MetadataReporter = (input: unknown) => {
+    if (!isRecord(input)) return reporter(input);
+    const inputMetadata = input.metadata;
+    if (!isRecord(inputMetadata)) {
+      return reporter({ ...input, metadata: { fleet: fleetJson } });
+    }
+    const currentFleet = isRecord(inputMetadata.fleet) ? inputMetadata.fleet : {};
+    return reporter({
+      ...input,
+      metadata: { ...inputMetadata, fleet: { ...currentFleet, ...fleetJson } },
+    });
+  };
+  Object.defineProperty(wrapped, "fleet", {
+    value: fleetJson,
+    enumerable: true,
+    configurable: true,
+  });
+  return wrapped;
 }
 
 function withFleetMetadata(value: unknown, fleet: FleetContext): unknown {
@@ -567,7 +653,10 @@ function collectFleetContextFields(target: Record<string, unknown>, value: unkno
   if (isRecord(properties)) collectFleetContextFields(target, properties);
 }
 
-function copyFleetContextFields(target: Record<string, unknown>, source: Record<string, unknown>): void {
+function copyFleetContextFields(
+  target: Record<string, unknown>,
+  source: Record<string, unknown>,
+): void {
   for (const key of [
     "workspace_id",
     "workspaceId",
@@ -678,5 +767,7 @@ export function mergeToolExecuteBeforeHookArgs(
 ): Record<string, unknown> {
   const inputArgs = isRecord(inputHookArgs) ? inputHookArgs : undefined;
   const outputArgs = isRecord(outputHookArgs) ? outputHookArgs : undefined;
-  return inputArgs && outputArgs ? { ...inputArgs, ...outputArgs } : (inputArgs ?? outputArgs ?? {});
+  return inputArgs && outputArgs
+    ? { ...inputArgs, ...outputArgs }
+    : (inputArgs ?? outputArgs ?? {});
 }

@@ -74,6 +74,11 @@ function readSignal(value: unknown): AbortSignal | undefined {
   return value.signal instanceof AbortSignal ? value.signal : undefined;
 }
 
+function readAbort(value: unknown): AbortSignal | undefined {
+  if (!isRecord(value)) return undefined;
+  return value.abort instanceof AbortSignal ? value.abort : undefined;
+}
+
 function readErrorField(value: unknown, field: string): unknown {
   if (!isRecord(value)) return undefined;
   if (!isRecord(value.error)) return undefined;
@@ -713,6 +718,37 @@ describe("wrapPlugin", () => {
     expect(aborted).toBe(true);
   });
 
+  test("public OpenCode abort signal fires on timeout", async () => {
+    let aborted = false;
+    const path = trackTemp(tempTelemetry());
+    const wrapped = wrapPlugin(
+      async () => ({
+        tool: {
+          slow_tool: {
+            description: "slow",
+            args: {},
+            execute: async (_args: unknown, ctx: unknown) => {
+              const abort = readAbort(ctx);
+              abort?.addEventListener("abort", () => {
+                aborted = true;
+              });
+              await sleep(200);
+              return "late";
+            },
+          },
+        },
+      }),
+      { name: "abortable", telemetryPath: path, defaultTimeoutMs: 50 },
+    );
+    const hooks = await wrapped(stubInput);
+    const slowRaw = hooks.tool?.slow_tool;
+    const execute = getExecute(slowRaw, "slow");
+    const result = await execute({}, { abort: new AbortController().signal });
+    assertToolFailureResult(result);
+    expect(result.error.code).toBe(ERROR_TIMEOUT);
+    expect(aborted).toBe(true);
+  });
+
   test("non-cooperative tools may continue after timeout if they ignore AbortSignal", async () => {
     let settledLate = false;
     const path = trackTemp(tempTelemetry());
@@ -768,6 +804,56 @@ describe("wrapPlugin", () => {
     await execute({}, originalContext);
     expect(fleetContracts.parseToolCallId(String(observedToolCallId)).ok).toBe(true);
     expect(originalContext.metadata).toEqual({});
+  });
+
+  test("tool execute preserves OpenCode metadata function and enriches metadata calls", async () => {
+    const calls: unknown[] = [];
+    let observedFunctionFleet: unknown;
+    const path = trackTemp(tempTelemetry());
+    const wrapped = wrapPlugin(
+      async () => ({
+        tool: {
+          ping: {
+            description: "ping",
+            args: {},
+            execute: async (_args: unknown, ctx: unknown) => {
+              if (!isRecord(ctx) || typeof ctx.metadata !== "function") {
+                throw new Error("metadata function missing");
+              }
+              observedFunctionFleet = Reflect.get(ctx.metadata, "fleet");
+              ctx.metadata({ title: "progress", metadata: { existing: "yes" } });
+              return "pong";
+            },
+          },
+        },
+      }),
+      { name: "fleet-context", telemetryPath: path },
+    );
+    const hooks = await wrapped(stubInput);
+    const pingRaw = hooks.tool?.ping;
+    const execute = getExecute(pingRaw, "ping");
+    const originalMetadata = (input: unknown): void => {
+      calls.push(input);
+    };
+
+    const result = await execute({}, { metadata: originalMetadata });
+
+    expect(result).toBe("pong");
+    expect(typeof originalMetadata).toBe("function");
+    expect(Reflect.get(originalMetadata, "fleet")).toBeUndefined();
+    expect(isRecord(observedFunctionFleet)).toBe(true);
+    if (!isRecord(observedFunctionFleet)) return;
+    expect(fleetContracts.parseToolCallId(String(observedFunctionFleet.tool_call_id)).ok).toBe(
+      true,
+    );
+    expect(calls.length).toBe(1);
+    const call = calls[0];
+    expect(isRecord(call)).toBe(true);
+    if (!isRecord(call) || !isRecord(call.metadata)) return;
+    expect(call.metadata.existing).toBe("yes");
+    expect(isRecord(call.metadata.fleet)).toBe(true);
+    if (!isRecord(call.metadata.fleet)) return;
+    expect(fleetContracts.parseToolCallId(String(call.metadata.fleet.tool_call_id)).ok).toBe(true);
   });
 
   test("tool.execute.before hook receives injected args.metadata.fleet", async () => {
