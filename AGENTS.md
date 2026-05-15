@@ -52,7 +52,11 @@ Wrapped tools validate every runtime `args` object against the tool's declared r
 
 ### Timeouts are cooperative cancellation
 
-Host Adapter aborts `ctx.signal` and returns a structured `E_TIMEOUT` failure when a wrapped tool exceeds its timeout. It cannot kill arbitrary in-process plugin work. Tool handlers that ignore `ctx.signal` may continue running until their own promise settles, so plugins must observe the signal before long loops, daemon waits, file walks, or large archive streams.
+Host Adapter aborts the public OpenCode `ctx.abort` signal and returns a structured `E_TIMEOUT` failure when a wrapped tool exceeds its timeout. It also keeps `ctx.signal` as a compatibility alias for existing internal consumers. It cannot kill arbitrary in-process plugin work: synchronous CPU loops can still block the event loop, and async handlers that ignore `ctx.abort` may continue running until their own promise settles. Plugins must observe `ctx.abort` before long loops, daemon waits, file walks, or large archive streams.
+
+### OpenCode ToolContext shape is preserved
+
+OpenCode's public tool context includes `abort: AbortSignal` and `metadata(input): void`. Do not replace `ctx.metadata` with a plain metadata object, and do not expose timeout cancellation only through non-public fields. When injecting fleet context, wrap `ctx.metadata()` so calls are enriched with `metadata.fleet`, and keep the original caller context unmutated. If you compose abort signals, clean up listeners in `finally` after execution completes.
 
 ### Error taxonomy is stable
 
@@ -112,6 +116,8 @@ The downstream smoke step is not optional when you change `WrapOptions`, `ToolFa
 ## Recent regressions
 
 **Wave 1 hotfix `eb3f323`** — input tool args were dropped during fleet metadata injection. The `tool.execute.before` hook was overlaying the entire `output.args` with a metadata object, replacing `patchText`/`filePath`/`oldString`/`content`. Fixed by merging `inputArgs` before the overlay. Three tests in `test/wrap.test.ts` explicitly cover this (`apply_patch`, `edit`, `write` tool names). If you touch the propagation path, run those tests first.
+
+**ToolContext regression `866a361`** — Host Adapter injected timeout cancellation as `ctx.signal` and replaced public `ctx.metadata()` with an object containing fleet metadata. OpenCode tools expect `ctx.abort` and callable `ctx.metadata(input)`. Fixed by composing `ctx.abort` with the adapter timeout signal, keeping `ctx.signal` as an alias, wrapping `ctx.metadata()` to merge `metadata.fleet`, and cleaning composed-signal listeners in `finally`. Regression tests in `test/wrap.test.ts` cover public abort timeout behavior and metadata function preservation.
 
 ## Coordination
 
