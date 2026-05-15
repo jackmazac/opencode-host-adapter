@@ -449,10 +449,7 @@ function installFleetHookPropagation(wrappedHooks: AnyHooks, opts: WrapOptions):
     // o.args is the output side — often `{}` in OpenCode's default hook call.
     // i.args (when present) carries the actual tool input (patchText, filePath, etc.).
     // If both are absent, fleet metadata is still injected as {metadata:{fleet:...}}.
-    const inputArgs = isRecord(i.args) ? i.args : undefined;
-    const outputArgs = isRecord(o.args) ? o.args : undefined;
-    const baseArgs: Record<string, unknown> =
-      inputArgs && outputArgs ? { ...inputArgs, ...outputArgs } : (inputArgs ?? outputArgs ?? {});
+    const baseArgs = mergeToolExecuteBeforeHookArgs(i.args, o.args);
     const fleet = prepareToolFleetContext(
       { metadata: readMetadataCandidate(baseArgs) },
       baseArgs,
@@ -669,4 +666,17 @@ function sanitizeStringRecordField(record: Record<string, unknown>, field: strin
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+/**
+ * Same merge semantics as {@link installFleetHookPropagation}: tool arguments may appear on
+ * the hook input, the hook output, or both; output keys win on overlap.
+ */
+export function mergeToolExecuteBeforeHookArgs(
+  inputHookArgs: unknown,
+  outputHookArgs: unknown,
+): Record<string, unknown> {
+  const inputArgs = isRecord(inputHookArgs) ? inputHookArgs : undefined;
+  const outputArgs = isRecord(outputHookArgs) ? outputHookArgs : undefined;
+  return inputArgs && outputArgs ? { ...inputArgs, ...outputArgs } : (inputArgs ?? outputArgs ?? {});
 }

@@ -23,7 +23,12 @@
  *   export default wrapPlugin(MyPlugin, { name: "my-plugin" });
  */
 
-export { extractFleetContext, extractFleetContextFromUnknown, wrapPlugin } from "./wrap.ts";
+export {
+  extractFleetContext,
+  extractFleetContextFromUnknown,
+  mergeToolExecuteBeforeHookArgs,
+  wrapPlugin,
+} from "./wrap.ts";
 export {
   ERROR_TIMEOUT,
   ERROR_TOOL_ARGS_INVALID,

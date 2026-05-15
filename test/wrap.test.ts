@@ -17,6 +17,7 @@ import {
   argDigest,
   extractFleetContextFromUnknown,
   fleetContracts,
+  mergeToolExecuteBeforeHookArgs,
   validateToolDefinitions,
   wrapPlugin,
 } from "../src/index.ts";
@@ -789,6 +790,18 @@ describe("wrapPlugin", () => {
   });
 
   // ── Regression: HOTFIX-HA1 — tool.execute.before must preserve input args ──
+
+  test("mergeToolExecuteBeforeHookArgs overlays output onto input", () => {
+    expect(
+      mergeToolExecuteBeforeHookArgs(
+        { filePath: "a.ts", oldString: "x" },
+        { filePath: "b.ts", metadata: { trace: "t" } },
+      ),
+    ).toEqual({ filePath: "b.ts", oldString: "x", metadata: { trace: "t" } });
+    expect(mergeToolExecuteBeforeHookArgs(undefined, { x: 1 })).toEqual({ x: 1 });
+    expect(mergeToolExecuteBeforeHookArgs({ x: 1 }, undefined)).toEqual({ x: 1 });
+    expect(mergeToolExecuteBeforeHookArgs("bad", "also")).toEqual({});
+  });
 
   test("tool.execute.before preserves apply_patch input args when injecting fleet metadata", async () => {
     let observedArgs: unknown;

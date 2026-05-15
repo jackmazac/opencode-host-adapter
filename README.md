@@ -7,6 +7,7 @@ Re-exports **`@mazac-fox/opencode-fleet-contracts`** (`fleetContracts` / `/contr
 ## What it does
 
 - `wrapPlugin(plugin, { name, ... })` — production path for fleet plugins.
+- `mergeToolExecuteBeforeHookArgs(inputArgs, outputArgs)` — same merge semantics as `tool.execute.before` fleet propagation (output wins key overlaps); use in hook plugins that read args before the merged shape exists on `output.args`.
 - `runPluginContractTests` — loadability, tool shape, telemetry, arg validation harness.
 - `validateToolDefinitions` — CI preflight without loading OpenCode.
 
