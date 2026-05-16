@@ -12,7 +12,6 @@ import { join } from "node:path";
 import { tool } from "@opencode-ai/plugin";
 import {
   assertToolFailureResult,
-  ERROR_TIMEOUT,
   ERROR_TOOL_ARGS_INVALID,
   argDigest,
   extractFleetContextFromUnknown,
@@ -77,12 +76,6 @@ function readSignal(value: unknown): AbortSignal | undefined {
 function readAbort(value: unknown): AbortSignal | undefined {
   if (!isRecord(value)) return undefined;
   return value.abort instanceof AbortSignal ? value.abort : undefined;
-}
-
-function readErrorField(value: unknown, field: string): unknown {
-  if (!isRecord(value)) return undefined;
-  if (!isRecord(value.error)) return undefined;
-  return value.error[field];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -630,7 +623,7 @@ describe("wrapPlugin", () => {
     expect(fleetContracts.parseToolCallId(String(second)).ok).toBe(true);
   });
 
-  test("defaultTimeoutMs returns E_TIMEOUT structured failure", async () => {
+  test("slow tools complete without host adapter deadlines", async () => {
     const path = trackTemp(tempTelemetry());
     const wrapped = wrapPlugin(
       async () => ({
@@ -639,144 +632,94 @@ describe("wrapPlugin", () => {
             description: "slow",
             args: {},
             execute: async () => {
-              await sleep(300);
+              await sleep(20);
               return "late";
             },
           },
         },
       }),
-      { name: "timeout", telemetryPath: path, defaultTimeoutMs: 100 },
+      { name: "no-timeout", telemetryPath: path },
     );
     const hooks = await wrapped(stubInput);
     const slowRaw = hooks.tool?.slow_tool;
     const execute = getExecute(slowRaw, "slow");
     const result = await execute({}, {});
-    assertToolFailureResult(result);
-    expect(result.error.code).toBe(ERROR_TIMEOUT);
-    expect(result.error.retryable).toBe(true);
-    const failed = telemetryByKind(path, "tool.failed").at(-1);
-    expect(readErrorField(failed, "code")).toBe(ERROR_TIMEOUT);
-    expect(readErrorField(failed, "retryable")).toBe(true);
+    expect(result).toBe("late");
+    expect(telemetryByKind(path, "tool.executed").at(-1)?.status).toBe("ok");
+    expect(telemetryByKind(path, "tool.failed")).toHaveLength(0);
   });
 
-  test("toolTimeouts per-tool override takes precedence over global default", async () => {
+  test("tool execute preserves caller abort signal and signal alias", async () => {
+    let observedAbort: AbortSignal | undefined;
+    let observedSignal: AbortSignal | undefined;
     const path = trackTemp(tempTelemetry());
     const wrapped = wrapPlugin(
       async () => ({
         tool: {
-          slow_tool: {
-            description: "slow",
-            args: {},
-            execute: async () => {
-              await sleep(200);
-              return "late";
-            },
-          },
-        },
-      }),
-      {
-        name: "timeout",
-        telemetryPath: path,
-        defaultTimeoutMs: 1000,
-        toolTimeouts: { slow_tool: 50 },
-      },
-    );
-    const hooks = await wrapped(stubInput);
-    const slowRaw = hooks.tool?.slow_tool;
-    const execute = getExecute(slowRaw, "slow");
-    const result = await execute({}, {});
-    assertToolFailureResult(result);
-    expect(result.error.code).toBe(ERROR_TIMEOUT);
-  });
-
-  test("AbortSignal is passed to plugins and fires on timeout", async () => {
-    let aborted = false;
-    const path = trackTemp(tempTelemetry());
-    const wrapped = wrapPlugin(
-      async () => ({
-        tool: {
-          slow_tool: {
-            description: "slow",
+          observes_abort: {
+            description: "observes abort",
             args: {},
             execute: async (_args: unknown, ctx: unknown) => {
-              const signal = readSignal(ctx);
-              signal?.addEventListener("abort", () => {
-                aborted = true;
-              });
-              await sleep(200);
-              return "late";
+              observedAbort = readAbort(ctx);
+              observedSignal = readSignal(ctx);
+              return "ok";
             },
           },
         },
       }),
-      { name: "abortable", telemetryPath: path, defaultTimeoutMs: 50 },
+      { name: "abortable", telemetryPath: path },
     );
+    const controller = new AbortController();
     const hooks = await wrapped(stubInput);
-    const slowRaw = hooks.tool?.slow_tool;
-    const execute = getExecute(slowRaw, "slow");
-    await execute({}, {});
-    expect(aborted).toBe(true);
+    const raw = hooks.tool?.observes_abort;
+    const execute = getExecute(raw, "observes_abort");
+    await execute({}, { abort: controller.signal });
+    expect(observedAbort).toBe(controller.signal);
+    expect(observedSignal).toBe(controller.signal);
   });
 
-  test("public OpenCode abort signal fires on timeout", async () => {
-    let aborted = false;
+  test("tool execute composes caller abort and signal without adding a deadline", async () => {
+    let observedAbort: AbortSignal | undefined;
+    let observedSignal: AbortSignal | undefined;
+    let observedAborted = false;
     const path = trackTemp(tempTelemetry());
     const wrapped = wrapPlugin(
       async () => ({
         tool: {
-          slow_tool: {
-            description: "slow",
+          observes_signal: {
+            description: "observes signal",
             args: {},
             execute: async (_args: unknown, ctx: unknown) => {
-              const abort = readAbort(ctx);
-              abort?.addEventListener("abort", () => {
-                aborted = true;
+              observedAbort = readAbort(ctx);
+              observedSignal = readSignal(ctx);
+              observedAbort?.addEventListener("abort", () => {
+                observedAborted = true;
               });
-              await sleep(200);
-              return "late";
+              await sleep(20);
+              return "ok";
             },
           },
         },
       }),
-      { name: "abortable", telemetryPath: path, defaultTimeoutMs: 50 },
+      { name: "abortable", telemetryPath: path },
     );
+    const abortController = new AbortController();
+    const signalController = new AbortController();
     const hooks = await wrapped(stubInput);
-    const slowRaw = hooks.tool?.slow_tool;
-    const execute = getExecute(slowRaw, "slow");
-    const result = await execute({}, { abort: new AbortController().signal });
-    assertToolFailureResult(result);
-    expect(result.error.code).toBe(ERROR_TIMEOUT);
-    expect(aborted).toBe(true);
-  });
-
-  test("non-cooperative tools may continue after timeout if they ignore AbortSignal", async () => {
-    let settledLate = false;
-    const path = trackTemp(tempTelemetry());
-    const wrapped = wrapPlugin(
-      async () => ({
-        tool: {
-          ignores_signal: {
-            description: "ignores signal",
-            args: {},
-            execute: async () => {
-              await sleep(60);
-              settledLate = true;
-              return "late";
-            },
-          },
-        },
-      }),
-      { name: "noncooperative", telemetryPath: path, defaultTimeoutMs: 10 },
+    const raw = hooks.tool?.observes_signal;
+    const execute = getExecute(raw, "observes_signal");
+    const resultPromise = execute(
+      {},
+      { abort: abortController.signal, signal: signalController.signal },
     );
-    const hooks = await wrapped(stubInput);
-    const raw = hooks.tool?.ignores_signal;
-    const execute = getExecute(raw, "ignores_signal");
-    const result = await execute({}, {});
-    assertToolFailureResult(result);
-    expect(result.error.code).toBe(ERROR_TIMEOUT);
-    expect(settledLate).toBe(false);
-    await sleep(80);
-    expect(settledLate).toBe(true);
+    await sleep(1);
+    signalController.abort();
+    const result = await resultPromise;
+    expect(result).toBe("ok");
+    expect(observedAbort).toBe(observedSignal);
+    expect(observedAbort).not.toBe(abortController.signal);
+    expect(observedAbort).not.toBe(signalController.signal);
+    expect(observedAborted).toBe(true);
   });
 
   test("tool execute receives injected context.metadata.fleet without mutating caller context", async () => {

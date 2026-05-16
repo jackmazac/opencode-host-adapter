@@ -1,6 +1,6 @@
 # @mazac-fox/opencode-host-adapter
 
-**Defensive boundary** for OpenCode plugins: validate tool definitions and runtime args, wrap execution with structured failures and timeouts, propagate **fleet correlation** IDs, normalize hook outputs, and append canonical **NDJSON telemetry**.
+**Defensive boundary** for OpenCode plugins: validate tool definitions and runtime args, wrap execution with structured failures, preserve OpenCode cancellation signals, propagate **fleet correlation** IDs, normalize hook outputs, and append canonical **NDJSON telemetry**.
 
 Re-exports **`@mazac-fox/opencode-fleet-contracts`** (`fleetContracts` / `/contracts`).
 
@@ -12,6 +12,8 @@ Re-exports **`@mazac-fox/opencode-fleet-contracts`** (`fleetContracts` / `/contr
 - `validateToolDefinitions` — CI preflight without loading OpenCode.
 
 No product logic (memory, locks, plans, graphs). Boundary options, error codes, and invariants: **`CONTRIBUTING.md`**, **`AGENTS.md`**.
+
+Host Adapter does not impose arbitrary tool execution deadlines. Plugin and runtime owners are responsible for cancellation policy; Host Adapter only preserves caller-provided `ctx.abort` / `ctx.signal` signals while wrapping execution.
 
 ## Quick start
 

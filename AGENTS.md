@@ -50,13 +50,13 @@ Wave 1 hotfix `eb3f323` fixed a bug where input tool args (`patchText`, `filePat
 
 Wrapped tools validate every runtime `args` object against the tool's declared raw-shape schemas before `execute` runs. Invalid payloads return `ToolFailureResult` with `error.code = "E_TOOL_ARGS_INVALID"`. Do not add an opt-out; this boundary prevents handler-level crashes such as `undefined is not an object`, `r.split`, path helpers receiving `undefined`, or file writes receiving missing content.
 
-### Timeouts are cooperative cancellation
+### Cancellation signals are preserved, not invented
 
-Host Adapter aborts the public OpenCode `ctx.abort` signal and returns a structured `E_TIMEOUT` failure when a wrapped tool exceeds its timeout. It also keeps `ctx.signal` as a compatibility alias for existing internal consumers. It cannot kill arbitrary in-process plugin work: synchronous CPU loops can still block the event loop, and async handlers that ignore `ctx.abort` may continue running until their own promise settles. Plugins must observe `ctx.abort` before long loops, daemon waits, file walks, or large archive streams.
+Host Adapter does not impose arbitrary tool execution deadlines. It preserves the public OpenCode `ctx.abort` signal and keeps `ctx.signal` as a compatibility alias for existing internal consumers. Plugin and runtime owners are responsible for cancellation policy. Plugins must observe caller-provided `ctx.abort` before long loops, daemon waits, file walks, or large archive streams.
 
 ### OpenCode ToolContext shape is preserved
 
-OpenCode's public tool context includes `abort: AbortSignal` and `metadata(input): void`. Do not replace `ctx.metadata` with a plain metadata object, and do not expose timeout cancellation only through non-public fields. When injecting fleet context, wrap `ctx.metadata()` so calls are enriched with `metadata.fleet`, and keep the original caller context unmutated. If you compose abort signals, clean up listeners in `finally` after execution completes.
+OpenCode's public tool context includes `abort: AbortSignal` and `metadata(input): void`. Do not replace `ctx.metadata` with a plain metadata object, and do not hide caller cancellation behind non-public fields. When injecting fleet context, wrap `ctx.metadata()` so calls are enriched with `metadata.fleet`, and keep the original caller context unmutated. If you compose abort signals, clean up listeners in `finally` after execution completes.
 
 ### Error taxonomy is stable
 
@@ -86,7 +86,7 @@ OpenCode runtime
        ▼
 ┌─────────────────────────────────────────────┐
 │        @mazac-fox/opencode-host-adapter      │
-│  validate → wrap → timeout → telemetry       │
+│  validate → wrap → telemetry                 │
 │  ← re-exports fleet-contracts               │
 └───────────────┬─────────────────────────────┘
                 │  wrapPlugin(Plugin, { name })
@@ -95,7 +95,7 @@ OpenCode runtime
 conductor    engram    concord / codemem
 ```
 
-Every plugin calls `wrapPlugin(TheirPlugin, { name: "..." })` and gets validation, structured failures, timeout enforcement, fleet context propagation, and telemetry for free.
+Every plugin calls `wrapPlugin(TheirPlugin, { name: "..." })` and gets validation, structured failures, fleet context propagation, signal preservation, and telemetry for free.
 
 ## Validation before commit
 
@@ -117,7 +117,7 @@ The downstream smoke step is not optional when you change `WrapOptions`, `ToolFa
 
 **Wave 1 hotfix `eb3f323`** — input tool args were dropped during fleet metadata injection. The `tool.execute.before` hook was overlaying the entire `output.args` with a metadata object, replacing `patchText`/`filePath`/`oldString`/`content`. Fixed by merging `inputArgs` before the overlay. Three tests in `test/wrap.test.ts` explicitly cover this (`apply_patch`, `edit`, `write` tool names). If you touch the propagation path, run those tests first.
 
-**ToolContext regression `866a361`** — Host Adapter injected timeout cancellation as `ctx.signal` and replaced public `ctx.metadata()` with an object containing fleet metadata. OpenCode tools expect `ctx.abort` and callable `ctx.metadata(input)`. Fixed by composing `ctx.abort` with the adapter timeout signal, keeping `ctx.signal` as an alias, wrapping `ctx.metadata()` to merge `metadata.fleet`, and cleaning composed-signal listeners in `finally`. Regression tests in `test/wrap.test.ts` cover public abort timeout behavior and metadata function preservation.
+**ToolContext regression `866a361`** — Host Adapter injected cancellation as `ctx.signal` and replaced public `ctx.metadata()` with an object containing fleet metadata. OpenCode tools expect `ctx.abort` and callable `ctx.metadata(input)`. Fixed by preserving caller-provided `ctx.abort`, keeping `ctx.signal` as an alias, wrapping `ctx.metadata()` to merge `metadata.fleet`, and cleaning composed-signal listeners in `finally`. Regression tests in `test/wrap.test.ts` cover public abort preservation and metadata function preservation.
 
 ## Coordination
 

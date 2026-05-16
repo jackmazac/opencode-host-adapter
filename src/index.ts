@@ -47,7 +47,6 @@ export type {
   ToolDefinitionResolved,
   ToolFailureResult,
   ToolLike,
-  ToolTimeoutOverrides,
   ToolValidationResult,
   WrapOptions,
 } from "./types.ts";

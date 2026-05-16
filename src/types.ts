@@ -77,8 +77,6 @@ export type AnyHooks = {
 
 export type FleetContextSource = "args" | "metadata" | "generated";
 
-export type ToolTimeoutOverrides = Record<string, number>;
-
 export type WrapOptions = {
   /** Stable plugin name used in telemetry and error messages. */
   name: string;
@@ -112,20 +110,8 @@ export type WrapOptions = {
   propagateFleetContext?: boolean;
 
   /**
-   * Global timeout, in milliseconds, for each wrapped tool execution.
-   * Default 240_000.
-   */
-  defaultTimeoutMs?: number;
-
-  /**
-   * Per-tool timeout overrides, keyed by tool name, in milliseconds. Values
-   * here take precedence over `defaultTimeoutMs`.
-   */
-  toolTimeouts?: ToolTimeoutOverrides;
-
-  /**
-   * Return the legacy `❌ [plugin].tool failed: message` string when a wrapped
-   * tool throws or times out. Default false, which returns ToolFailureResult.
+   * Return the legacy `❌ [plugin].tool failed: message` string when wrapped
+   * tool execution fails. Default false, which returns ToolFailureResult.
    */
   legacyErrorString?: boolean;
 };

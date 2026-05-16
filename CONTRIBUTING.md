@@ -19,6 +19,10 @@ Type assertions hide real type errors. Use type guards (`typeof`, `in`, custom p
 
 The telemetry sink in `src/telemetry.ts` swallows all errors. If you add new telemetry call sites, do not introduce paths that throw on disk full / permission denied / file too long. Telemetry failures must not break a plugin hook.
 
+### Do not impose tool execution deadlines
+
+Host Adapter is a boundary wrapper, not a scheduler. Preserve caller-provided `ctx.abort` / `ctx.signal`, but do not add arbitrary timeout durations for wrapped plugin tools. Runtime owners and plugin authors own cancellation policy.
+
 ### Validation errors must include the exact problem
 
 When `validateToolDefinition` rejects a tool, the error string must:

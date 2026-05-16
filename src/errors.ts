@@ -3,6 +3,7 @@
  */
 
 export const ERROR_TOOL_ARGS_INVALID = "E_TOOL_ARGS_INVALID";
+/** @deprecated Host Adapter no longer imposes tool execution timeouts. */
 export const ERROR_TIMEOUT = "E_TIMEOUT";
 
 export type HostAdapterErrorCode = typeof ERROR_TOOL_ARGS_INVALID | typeof ERROR_TIMEOUT;

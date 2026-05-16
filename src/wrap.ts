@@ -13,7 +13,6 @@ import {
   type FleetContext,
   type ToolCallId,
 } from "@mazac-fox/opencode-fleet-contracts";
-import { ERROR_TIMEOUT } from "./errors.ts";
 import { argDigest, emit, errorPayload } from "./telemetry.ts";
 import { validateToolArgs } from "./tool-args.ts";
 import type { AnyHooks, FleetContextSource, ToolFailureResult, WrapOptions } from "./types.ts";
@@ -27,13 +26,9 @@ type WrappedTool = {
 
 type OpenCodePassthrough = { sessionID?: string; callID?: string };
 
-type ExecutionOutcome =
-  | { kind: "ok"; value: unknown }
-  | { kind: "error"; error: unknown }
-  | { kind: "timeout"; error: { name: string; message: string; code: string; retryable: boolean } };
+type ExecutionOutcome = { kind: "ok"; value: unknown } | { kind: "error"; error: unknown };
 
 const TRACE_KEY = "trace_id";
-const DEFAULT_TIMEOUT_MS = 240_000;
 
 export function wrapPlugin<I, O>(
   plugin: (input: I, options?: O) => Promise<unknown>,
@@ -159,8 +154,6 @@ function wrapToolExecute(
     const traceId = readTraceId(context);
     const toolCallId = newToolCallId();
     const fleet = prepareToolFleetContext(context, args, toolCallId);
-    const timeoutMs = timeoutForTool(toolName, opts);
-    const controller = new AbortController();
 
     const validatedArgs = validateToolArgs(toolName, def.args, args);
     if (!validatedArgs.ok) {
@@ -181,24 +174,20 @@ function wrapToolExecute(
 
     const executeContext = withExecutionContext(
       context,
-      controller.signal,
       opts.propagateFleetContext === false ? undefined : fleet.context,
     );
     let outcome: ExecutionOutcome;
     try {
-      outcome = await runWithTimeout(
+      outcome = await runOriginalExecute(
         originalExecute,
         validatedArgs.value,
         executeContext.value,
-        timeoutMs,
-        controller,
       );
     } finally {
       executeContext.cleanup();
     }
-    if (outcome.kind === "error" || outcome.kind === "timeout") {
-      const telemetryError =
-        outcome.kind === "timeout" ? outcome.error : errorPayload(outcome.error);
+    if (outcome.kind === "error") {
+      const telemetryError = errorPayload(outcome.error);
       emit(opts, {
         kind: "tool.failed",
         plugin: opts.name,
@@ -233,36 +222,6 @@ function wrapToolExecute(
     args: def.args,
     execute: wrappedExecute,
   };
-}
-
-async function runWithTimeout(
-  execute: (...args: unknown[]) => unknown,
-  args: unknown,
-  context: unknown,
-  timeoutMs: number,
-  controller: AbortController,
-): Promise<ExecutionOutcome> {
-  let timeoutId: ReturnType<typeof setTimeout> | undefined;
-  const execution = runOriginalExecute(execute, args, context);
-  const timeout = new Promise<ExecutionOutcome>((resolve) => {
-    timeoutId = setTimeout(() => {
-      controller.abort();
-      resolve({
-        kind: "timeout",
-        error: {
-          name: "TimeoutError",
-          message: `tool execution timed out after ${timeoutMs}ms`,
-          code: ERROR_TIMEOUT,
-          retryable: true,
-        },
-      });
-    }, timeoutMs);
-  });
-  try {
-    return await Promise.race([execution, timeout]);
-  } finally {
-    if (timeoutId !== undefined) clearTimeout(timeoutId);
-  }
 }
 
 async function runOriginalExecute(
@@ -516,23 +475,23 @@ function installTraceIdPropagation(wrappedHooks: AnyHooks, opts: WrapOptions): v
 
 function withExecutionContext(
   context: unknown,
-  signal: AbortSignal,
   fleet: FleetContext | undefined,
 ): WrappedExecutionContext {
-  const composed = composeAbortSignal(signal, context);
-  const abort = composed.signal;
+  const composed = composeAbortSignal(context);
+  const signalFields = composed.signal
+    ? { abort: composed.signal, signal: composed.signal }
+    : undefined;
   let value: unknown;
   if (!isRecord(context)) {
     value = fleet
-      ? { metadata: { fleet: fleetContextToJson(fleet) }, abort, signal: abort }
-      : { abort, signal: abort };
+      ? { metadata: { fleet: fleetContextToJson(fleet) }, ...signalFields }
+      : { ...signalFields };
     return { value, cleanup: composed.cleanup };
   }
-  if (!fleet) return { value: { ...context, abort, signal: abort }, cleanup: composed.cleanup };
+  if (!fleet) return { value: { ...context, ...signalFields }, cleanup: composed.cleanup };
   value = {
     ...context,
-    abort,
-    signal: abort,
+    ...signalFields,
     metadata: mergeExecutionMetadata(context.metadata, fleet),
   };
   return { value, cleanup: composed.cleanup };
@@ -540,16 +499,20 @@ function withExecutionContext(
 
 type WrappedExecutionContext = { value: unknown; cleanup: () => void };
 
-type ComposedAbortSignal = { signal: AbortSignal; cleanup: () => void };
+type ComposedAbortSignal = { signal: AbortSignal | undefined; cleanup: () => void };
 
-function composeAbortSignal(signal: AbortSignal, context: unknown): ComposedAbortSignal {
-  const signals = [signal];
+function composeAbortSignal(context: unknown): ComposedAbortSignal {
+  const signals: AbortSignal[] = [];
+  const addSignal = (signal: unknown): void => {
+    if (signal instanceof AbortSignal && !signals.includes(signal)) signals.push(signal);
+  };
   if (isRecord(context)) {
-    if (context.abort instanceof AbortSignal) signals.push(context.abort);
-    if (context.signal instanceof AbortSignal) signals.push(context.signal);
+    addSignal(context.abort);
+    addSignal(context.signal);
   }
 
-  if (signals.length === 1) return { signal, cleanup: () => {} };
+  if (signals.length === 0) return { signal: undefined, cleanup: () => {} };
+  if (signals.length === 1) return { signal: signals[0], cleanup: () => {} };
 
   const controller = new AbortController();
   const listeners: Array<{ source: AbortSignal; listener: () => void }> = [];
@@ -700,12 +663,6 @@ function readTraceId(context: unknown): string | undefined {
   if (!isRecord(context)) return undefined;
   if (!isRecord(context.metadata)) return undefined;
   return typeof context.metadata[TRACE_KEY] === "string" ? context.metadata[TRACE_KEY] : undefined;
-}
-
-function timeoutForTool(toolName: string, opts: WrapOptions): number {
-  const override = opts.toolTimeouts?.[toolName];
-  const configured = override ?? opts.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS;
-  return Number.isFinite(configured) && configured >= 0 ? configured : DEFAULT_TIMEOUT_MS;
 }
 
 function newTraceId(): string {
